@@ -1,0 +1,54 @@
+[package]
+name = "pinetime-rust"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = ["nightly"]
+nightly = [
+    "embassy-executor/nightly",
+    "embassy-nrf/nightly",
+    # "embassy-net/nightly",
+    "embassy-nrf/unstable-traits",
+    "embedded-io/async",
+    # "embassy-net"
+]
+
+[build-dependencies]
+chrono = "0.4.24"
+
+[dependencies]
+# Core dependencies
+cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7.3"
+
+# Embassy
+embassy-executor = { version = "0.1.1", features = ["defmt", "integrated-timers"] }
+embassy-nrf = { git = "https://github.com/embassy-rs/embassy", dir = "tree/master/embassy-nrf", branch = "master", features = ["defmt", "nrf52832", "time-driver-rtc1", "gpiote", "unstable-pac", "time"] }
+embassy-sync = "0.1.0"
+embassy-time = { version = "0.1.0", features = ["defmt", "defmt-timestamp-uptime"] }
+# embassy-net = { git = "https://github.com/embassy-rs/embassy", dir = "tree/master/embassy-net", branch = "master", features = ["defmt", "tcp", "dhcpv4", "medium-ethernet"], optional = true }
+
+# Storage
+# embedded-storage = "0.3.0"
+
+# IO
+embedded-io = "0.4.0"
+
+# Bluetooth
+# nrf-softdevice = "0.0.0"
+rubble = "0.0.4"
+rubble-nrf5x = { version = "0.0.4", features = ["52832"] }
+
+# Graphics
+chrono = { version = "0.4.24", default-features = false }
+display-interface-spi = "0.4.1"
+embedded-graphics = "0.7.1"
+format_no_std = "1.0.0"
+mipidsi = "0.6.0"
+
+# Debug probe
+defmt = "0.3.0"
+defmt-rtt = "0.4.0"
+panic-probe = { version = "0.3.0", features = ["print-defmt"] }
