@@ -3,7 +3,10 @@
 //! Implementation based upon https://github.com/dbrgn/pinetime-rtic/blob/master/pinetime-rtic/src/backlight.rs
 //! and https://wiki.pine64.org/wiki/PineTime.
 
-use embassy_nrf::gpio::{Output, AnyPin};
+use nrf52832_hal::{
+    gpio::{Output, Pin, PushPull},
+    prelude::*,
+};
 
 /// Control the backlight.
 ///
@@ -18,9 +21,9 @@ use embassy_nrf::gpio::{Output, AnyPin};
 /// configured.
 #[allow(unused)]
 pub struct Backlight {
-    low: Output<'static, AnyPin>,
-    mid: Output<'static, AnyPin>,
-    high: Output<'static, AnyPin>,
+    low: Pin<Output<PushPull>>,
+    mid: Pin<Output<PushPull>>,
+    high: Pin<Output<PushPull>>,
 
     /// The current brightness level (value between 0 and 7).
     brightness: u8,
@@ -30,9 +33,9 @@ impl Backlight {
     /// Initialize the backlight with the specified level (0–7).
     #[allow(unused)]
     pub fn init(
-        low: Output<'static, AnyPin>,
-        mid: Output<'static, AnyPin>,
-        high: Output<'static, AnyPin>,
+        low: Pin<Output<PushPull>>,
+        mid: Pin<Output<PushPull>>,
+        high: Pin<Output<PushPull>>,
         brightness: u8,
     ) -> Self {
         let mut backlight = Self {
@@ -45,29 +48,33 @@ impl Backlight {
         backlight
     }
 
-    /// Set the brightness level. Must be a value between 0 (off) and 7 (max
-    /// brightness). Higher values are clamped to 7.
-    pub fn set(&mut self, mut brightness: u8) {
-        if brightness > 7 {
-            brightness = 7;
+    /// Set the brightness level between 0 (off) and 7 (max brightness).
+    pub fn set(&mut self, brightness: u8) -> Result<(), Error> {
+        match brightness {
+            0..=7 => {
+                defmt::debug!("Setting backlight brightness to {}", brightness);
+
+                if brightness & 0x01 > 0 {
+                    self.low.set_low().unwrap();
+                } else {
+                    self.low.set_high().unwrap();
+                }
+                if brightness & 0x02 > 0 {
+                    self.mid.set_low().unwrap();
+                } else {
+                    self.mid.set_high().unwrap();
+                }
+                if brightness & 0x04 > 0 {
+                    self.high.set_low().unwrap();
+                } else {
+                    self.high.set_high().unwrap();
+                }
+                self.brightness = brightness;
+
+                Ok(())
+            },
+            _ => Err(Error::OutOfBounds),
         }
-        defmt::debug!("Setting backlight brightness to {}", brightness);
-        if brightness & 0x01 > 0 {
-            self.low.set_low();
-        } else {
-            self.low.set_high();
-        }
-        if brightness & 0x02 > 0 {
-            self.mid.set_low();
-        } else {
-            self.mid.set_high();
-        }
-        if brightness & 0x04 > 0 {
-            self.high.set_low();
-        } else {
-            self.high.set_high();
-        }
-        self.brightness = brightness;
     }
     
     /// Turn off the backlight.
@@ -78,14 +85,14 @@ impl Backlight {
 
     /// Increase backlight brightness.
     #[allow(unused)]
-    pub fn brighter(&mut self) {
-        self.set(self.brightness + 1);
+    pub fn brighter(&mut self) -> Result<(), Error> {
+        self.set(self.brightness + 1)
     }
 
     /// Decrease backlight brightness.
     #[allow(unused)]
-    pub fn darker(&mut self) {
-        self.set(self.brightness - 1);
+    pub fn darker(&mut self) -> Result<(), Error> {
+        self.set(self.brightness - 1)
     }
 
     /// Return the current brightness level (value between 0 and 7).
@@ -93,4 +100,9 @@ impl Backlight {
     pub fn get_brightness(&self) -> u8 {
         self.brightness
     }
+}
+
+#[derive(Debug)]
+pub enum Error {
+    OutOfBounds,
 }
