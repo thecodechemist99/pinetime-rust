@@ -11,8 +11,11 @@ mod monotonic_nrf52;
 #[rtic::app(device = nrf52832_hal::pac, peripherals = true, dispatchers = [SWI0_EGU0, SWI1_EGU1, SWI2_EGU2, SWI3_EGU3, SWI4_EGU4, SWI5_EGU5])]
 mod app {
     // Panic handler and debugging
-    use defmt_rtt as _;
-    use panic_rtt_target as _;
+    #[cfg(not(test))]
+    use {
+        defmt_rtt as _,
+        panic_probe as _,
+    };
 
     /// Terminates the application and makes `probe-run` exit with exit-code = 0
     pub fn exit() -> ! {
@@ -55,7 +58,7 @@ mod app {
     use rubble::link::queue::{PacketQueue, SimpleQueue};
     use rubble::link::{DeviceAddress, LinkLayer, Responder, MIN_PDU_BUF};
     use rubble::security::NoSecurity;
-    use rubble::time::{Duration as RubbleDuration};
+    use rubble::time::{Duration as RubbleDuration, Timer};
     use rubble_nrf5x::radio::{BleRadio, PacketBuffer};
     use rubble_nrf5x::timer::BleTimer;
     use rubble_nrf5x::utils::get_device_address;
@@ -74,7 +77,13 @@ mod app {
         backlight: Backlight,
         #[lock_free]
         battery: BatteryStatus,
+        #[lock_free]
+        ble_ll: LinkLayer<BleConfig>,
+        #[lock_free]
+        ble_r: Responder<BleConfig>,
         display: Display,
+        #[lock_free]
+        radio: BleRadio,
     }
 
     #[local]
@@ -170,7 +179,7 @@ mod app {
         
         // Create the actual BLE stack objects
         let mut ble_ll: LinkLayer<BleConfig> = LinkLayer::new(device_address, ble_timer);
-        let mut ble_r: Responder<BleConfig> = Responder::new(
+        let ble_r: Responder<BleConfig> = Responder::new(
             tx,
             rx,
             L2CAPState::new(BleChannelMap::with_attributes(BatteryServiceAttrs::new())),
@@ -179,7 +188,7 @@ mod app {
         // Send advertisement and set up regular interrupt
         let next_update = ble_ll
             .start_advertise(
-                RubbleDuration::from_millis(200),
+                RubbleDuration::millis(200),
                 &[AdStructure::CompleteLocalName("Rusty PineTime")],
                 &mut radio,
                 tx_cons,
@@ -232,7 +241,10 @@ mod app {
             Shared {
                 backlight,
                 battery,
+                ble_ll,
+                ble_r,
                 display,
+                radio,
             },
             Local {
                 button,
@@ -242,8 +254,61 @@ mod app {
         )
     }
 
+    /// Hook up the RADIO interrupt to the Rubble BLE stack.
+    #[task(binds = RADIO, shared = [radio, ble_ll], priority = 4)]
+    fn radio(c: radio::Context) {
+        let ble_ll: &mut LinkLayer<BleConfig> = c.shared.ble_ll;
+        if let Some(cmd) = c
+            .shared
+            .radio
+            .recv_interrupt(ble_ll.timer().now(), ble_ll)
+        {
+            c.shared.radio.configure_receiver(cmd.radio);
+            ble_ll.timer().configure_interrupt(cmd.next_update);
+
+            if cmd.queued_work {
+                // If there's any lower-priority work to be done, ensure that happens.
+                // If we fail to spawn the task, it's already scheduled.
+                ble_worker::spawn().ok().unwrap();
+            }
+        }
+    }
+
+    /// Hook up the TIMER2 interrupt to the Rubble BLE stack.
+    #[task(binds = TIMER2, shared = [radio, ble_ll], priority = 4)]
+    fn ble_timer(c: ble_timer::Context) {
+        let timer = c.shared.ble_ll.timer();
+        if !timer.is_interrupt_pending() {
+            return;
+        }
+        timer.clear_interrupt();
+
+        let cmd = c.shared.ble_ll.update_timer(&mut *c.shared.radio);
+        c.shared.radio.configure_receiver(cmd.radio);
+
+        c.shared
+            .ble_ll
+            .timer()
+            .configure_interrupt(cmd.next_update);
+
+        if cmd.queued_work {
+            // If there's any lower-priority work to be done, ensure that happens.
+            // If we fail to spawn the task, it's already scheduled.
+            ble_worker::spawn().ok().unwrap();
+        }
+    }
+
+    /// Lower-priority task spawned from RADIO and TIMER2 interrupts.
+    #[task(shared = [ble_r], priority = 3)]
+    fn ble_worker(c: ble_worker::Context) {
+        // Fully drain the packet queue
+        while c.shared.ble_r.has_work() {
+            c.shared.ble_r.process_one().unwrap();
+        }
+    }
+
     /// Polls the button state every 2ms
-    #[task(local = [button, button_debouncer], priority = 2)]
+    #[task(local = [button, button_debouncer], priority = 3)]
     fn poll_button(c: poll_button::Context) {
         let poll_button::LocalResources {
             button,
@@ -277,7 +342,7 @@ mod app {
 
     /// Fetch the battery status from the hardware. Update the text if
     /// something changed.
-    #[task(shared = [backlight, battery], priority = 3)]
+    #[task(shared = [backlight, battery], priority = 2)]
     fn update_battery_status(mut c: update_battery_status::Context) {
         let mut inhibit = false;
         c.shared.backlight.lock(|bl| {
@@ -295,7 +360,7 @@ mod app {
     }
 
     /// Show the battery status on the LCD.
-    #[task(shared = [battery, display], priority = 3)]
+    #[task(shared = [battery, display], priority = 2)]
     fn show_battery_status(mut c: show_battery_status::Context) {
         let voltage = c.shared.battery.voltage();
         let charging = c.shared.battery.is_charging();
@@ -313,7 +378,7 @@ mod app {
     }
 
     /// Show the current time on the LCD.
-    #[task(shared = [backlight, display], priority = 1)]
+    #[task(shared = [backlight, display], priority = 3)]
     fn update_time(mut c: update_time::Context) {
         let now = monotonics::now();
 

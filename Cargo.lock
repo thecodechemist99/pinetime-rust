@@ -762,13 +762,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "panic-rtt-target"
-version = "0.1.2"
+name = "panic-probe"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d6ab67bc881453e4c90f958c657c1303670ea87bc1a16e87fd71a40f656dce9"
+checksum = "3ab1f00eac22bd18f8e5cae9555f2820b3a0c166b5b556ee3e203746ea6dcf3a"
 dependencies = [
  "cortex-m",
- "rtt-target",
+ "defmt",
 ]
 
 [[package]]
@@ -789,7 +789,7 @@ dependencies = [
  "fugit",
  "mipidsi",
  "nrf52832-hal",
- "panic-rtt-target",
+ "panic-probe",
  "profont",
  "rubble",
  "rubble-nrf5x",
@@ -886,21 +886,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "rtt-target"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "065d6058bb1204f51a562a67209e1817cf714759d5cf845aa45c75fa7b0b9d9b"
-dependencies = [
- "ufmt-write",
-]
-
-[[package]]
 name = "rubble"
 version = "0.0.4"
-source = "git+https://github.com/thecodechemist99/rubble#a0c43ef51dc4a710554bfab0c09b59bb6985e2d3"
+source = "git+https://github.com/thecodechemist99/rubble#844563bd6fb7da4ea7c89ac3d678080e33902dd3"
 dependencies = [
  "bitflags 2.0.2",
  "defmt",
+ "fugit",
  "heapless",
  "p256",
  "rand_core",
@@ -911,7 +903,7 @@ dependencies = [
 [[package]]
 name = "rubble-nrf5x"
 version = "0.0.4"
-source = "git+https://github.com/thecodechemist99/rubble#a0c43ef51dc4a710554bfab0c09b59bb6985e2d3"
+source = "git+https://github.com/thecodechemist99/rubble#844563bd6fb7da4ea7c89ac3d678080e33902dd3"
 dependencies = [
  "nrf52832-pac",
  "rubble",
@@ -1060,12 +1052,6 @@ name = "typenum"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "497961ef93d974e23eb6f433eb5fe1b7930b659f06d12dec6fc44a8f554c0bba"
-
-[[package]]
-name = "ufmt-write"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e87a2ed6b42ec5e28cc3b94c09982969e9227600b2e3dcbc1db927a84c06bd69"
 
 [[package]]
 name = "unicode-ident"
