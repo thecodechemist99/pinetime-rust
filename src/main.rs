@@ -69,8 +69,6 @@ mod app {
         type PacketQueue = &'static mut SimpleQueue;
     }
 
-
-
     #[shared]
     struct Shared {
         backlight: Backlight,
@@ -126,6 +124,34 @@ mod app {
         // Initialize BLE timer on TIMER2
         let ble_timer = BleTimer::init(TIMER2);
 
+        // Initialize GPIO peripheral
+        let gpio = hal::gpio::p0::Parts::new(P0);
+
+        // Initialize SAADC
+        let mut saadc_config = SaadcConfig::default();
+        // Set resolution to 12bit, necessary for correct battery status calculation
+        saadc_config.resolution = Resolution::_12BIT;
+        let saadc = Saadc::new(SAADC, saadc_config);
+
+        // Initialize Backlight
+        let mut backlight = Backlight::init(
+            gpio.p0_14.into_push_pull_output(Level::High).degrade(),
+            gpio.p0_22.into_push_pull_output(Level::High).degrade(),
+            gpio.p0_23.into_push_pull_output(Level::High).degrade(),
+            0,
+        );
+
+        // Initalize Battery
+        let battery = BatteryStatus::init(
+            gpio.p0_12.into_floating_input().degrade(),
+            gpio.p0_31.into_floating_input(),
+            saadc,
+        ).unwrap();
+
+        // Initialize Button
+        let _ = gpio.p0_15.into_push_pull_output(Level::High);
+        let button = gpio.p0_13.into_floating_input().degrade();
+
         // Get bluetooth device address
         let device_address = get_device_address();
         defmt::info!("Bluetooth device address: {:?}", defmt::Debug2Format(&device_address));
@@ -162,34 +188,6 @@ mod app {
             .unwrap();
 
         ble_ll.timer().configure_interrupt(next_update);
-
-        // Initialize GPIO peripheral
-        let gpio = hal::gpio::p0::Parts::new(P0);
-
-        // Initialize SAADC
-        let mut saadc_config = SaadcConfig::default();
-        // Set resolution to 12bit, necessary for correct battery status calculation
-        saadc_config.resolution = Resolution::_12BIT;
-        let saadc = Saadc::new(SAADC, saadc_config);
-
-        // Initialize Backlight
-        let mut backlight = Backlight::init(
-            gpio.p0_14.into_push_pull_output(Level::High).degrade(),
-            gpio.p0_22.into_push_pull_output(Level::High).degrade(),
-            gpio.p0_23.into_push_pull_output(Level::High).degrade(),
-            0,
-        );
-
-        // Initalize Battery
-        let battery = BatteryStatus::init(
-            gpio.p0_12.into_floating_input().degrade(),
-            gpio.p0_31.into_floating_input(),
-            saadc,
-        ).unwrap();
-
-        // Initialize Button
-        let _ = gpio.p0_15.into_push_pull_output(Level::High);
-        let button = gpio.p0_13.into_floating_input().degrade();
 
         // Initialize SPI
         let spi_pins = hal::spim::Pins {
