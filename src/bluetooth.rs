@@ -1,19 +1,19 @@
-use embassy_nrf::{
+use nrf52832_hal::{
     pac::{
         FICR,
         RADIO,
+        TIMER2,
     },
-    peripherals::TIMER2,
 };
 
 use rubble::{config::Config};
 use rubble::gatt::BatteryServiceAttrs;
 use rubble::l2cap::{BleChannelMap, L2CAPState};
-// use rubble::link::ad_structure::AdStructure;
+use rubble::link::ad_structure::AdStructure;
 use rubble::link::queue::{PacketQueue, SimpleQueue};
 use rubble::link::{DeviceAddress, LinkLayer, Responder, MIN_PDU_BUF};
 use rubble::security::NoSecurity;
-// use rubble::time::{Duration as RubbleDuration, Timer};
+use rubble::time::{Duration as RubbleDuration};
 use rubble_nrf5x::radio::{BleRadio, PacketBuffer};
 use rubble_nrf5x::timer::BleTimer;
 use rubble_nrf5x::utils::get_device_address;
@@ -24,12 +24,13 @@ impl Config for BleConfig {
     type Timer = BleTimer<TIMER2>;
     type Transmitter = BleRadio;
     type ChannelMapper = BleChannelMap<BatteryServiceAttrs, NoSecurity>;
+    type PacketQueue = &'static mut SimpleQueue;
 }
 
 #[allow(unused)]
-pub struct Bluetooth {
+pub struct BLE {
     /// BLE timer
-    ble_timer: <BleConfig as rubble::config::Config>::Timer,
+    // ble_timer: <BleConfig as rubble::config::Config>::Timer,
 
     /// Bluetooth device address
     device_address: DeviceAddress,
@@ -44,10 +45,11 @@ pub struct Bluetooth {
     ble_r: Responder<BleConfig>,
 }
 
-impl Bluetooth {
-    pub fn init() -> Self {
+impl BLE {
+    /// Initialize BLE
+    pub fn init(ficr: &FICR, radio: RADIO, timer: TIMER2) -> Self {
         // Initialize BLE timer on TIMER2
-        let ble_timer = BleTimer::init(TIMER2);
+        let ble_timer = BleTimer::init(timer);
 
         // Get bluetooth device address
         let device_address = get_device_address();
@@ -57,10 +59,9 @@ impl Bluetooth {
         let ble_tx_buf: PacketBuffer = [0; MIN_PDU_BUF];
         let ble_rx_buf: PacketBuffer = [0; MIN_PDU_BUF];
 
-
         let mut radio = BleRadio::new(
-            RADIO,
-            &FICR,
+            radio,
+            ficr,
             &mut ble_tx_buf,
             &mut ble_rx_buf,
         );
@@ -80,7 +81,18 @@ impl Bluetooth {
             L2CAPState::new(BleChannelMap::with_attributes(BatteryServiceAttrs::new())),
         );
 
-        Self { ble_timer, device_address, radio, ble_ll, ble_r }
-    }
+        // Send advertisement and set up regular interrupt
+        let next_update = ble_ll
+            .start_advertise(
+                RubbleDuration::from_millis(200),
+                &[AdStructure::CompleteLocalName("Rusty PineTime")],
+                &mut radio,
+                tx_cons,
+                rx_prod,
+            )
+            .unwrap();
+        ble_ll.timer().configure_interrupt(next_update);
 
+        Self { device_address, radio, ble_ll, ble_r }
+    }
 }
