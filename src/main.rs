@@ -3,7 +3,6 @@
 
 mod backlight;
 mod battery;
-// mod bluetooth;
 mod delay;
 mod display;
 mod monotonic_nrf52;
@@ -34,11 +33,36 @@ mod app {
         saadc::{Saadc, SaadcConfig, Resolution},
     };
     use rtic::Monotonic;
+    use rubble::{
+        config::Config,
+        gatt::BatteryServiceAttrs,
+        l2cap::{BleChannelMap, L2CAPState},
+        link::{
+            ad_structure::AdStructure,
+            queue::{PacketQueue, SimpleQueue},
+            {LinkLayer, Responder, MIN_PDU_BUF},
+        },
+        security::NoSecurity,
+        time::{Duration as RubbleDuration, Timer},
+    };
+    use rubble_nrf5x::{
+        radio::{BleRadio, PacketBuffer},
+        timer::BleTimer,
+        utils::get_device_address,
+    };
+
+    pub struct BleConfig {}
+
+    impl Config for BleConfig {
+        type Timer = BleTimer<pac::TIMER2>;
+        type Transmitter = BleRadio;
+        type ChannelMapper = BleChannelMap<BatteryServiceAttrs, NoSecurity>;
+        type PacketQueue = &'static mut SimpleQueue;
+    }
 
     // Crate
     use crate::backlight::Backlight;
     use crate::battery::BatteryStatus;
-    // use crate::bluetooth::BLE;
     use crate::delay::TimerDelay;
     use crate::display::Display;
     use crate::monotonic_nrf52::MonoTimer;
@@ -49,28 +73,6 @@ mod app {
 
     // Include current utc time timestamp at compile time
     include!(concat!(env!("OUT_DIR"), "/utc.rs"));
-
-
-    use rubble::{config::Config};
-    use rubble::gatt::BatteryServiceAttrs;
-    use rubble::l2cap::{BleChannelMap, L2CAPState};
-    use rubble::link::ad_structure::AdStructure;
-    use rubble::link::queue::{PacketQueue, SimpleQueue};
-    use rubble::link::{DeviceAddress, LinkLayer, Responder, MIN_PDU_BUF};
-    use rubble::security::NoSecurity;
-    use rubble::time::{Duration as RubbleDuration, Timer};
-    use rubble_nrf5x::radio::{BleRadio, PacketBuffer};
-    use rubble_nrf5x::timer::BleTimer;
-    use rubble_nrf5x::utils::get_device_address;
-
-    pub struct BleConfig {}
-
-    impl Config for BleConfig {
-        type Timer = BleTimer<pac::TIMER2>;
-        type Transmitter = BleRadio;
-        type ChannelMapper = BleChannelMap<BatteryServiceAttrs, NoSecurity>;
-        type PacketQueue = &'static mut SimpleQueue;
-    }
 
     #[shared]
     struct Shared {
@@ -255,13 +257,11 @@ mod app {
     }
 
     /// Hook up the RADIO interrupt to the Rubble BLE stack.
-    #[task(binds = RADIO, shared = [radio, ble_ll], priority = 4)]
+    #[task(binds = RADIO, shared = [radio, ble_ll], priority = 3)]
     fn radio(c: radio::Context) {
         let ble_ll: &mut LinkLayer<BleConfig> = c.shared.ble_ll;
-        if let Some(cmd) = c
-            .shared
-            .radio
-            .recv_interrupt(ble_ll.timer().now(), ble_ll)
+        if let Some(cmd) = 
+            c.shared.radio.recv_interrupt(ble_ll.timer().now(), ble_ll)
         {
             c.shared.radio.configure_receiver(cmd.radio);
             ble_ll.timer().configure_interrupt(cmd.next_update);
@@ -275,7 +275,7 @@ mod app {
     }
 
     /// Hook up the TIMER2 interrupt to the Rubble BLE stack.
-    #[task(binds = TIMER2, shared = [radio, ble_ll], priority = 4)]
+    #[task(binds = TIMER2, shared = [radio, ble_ll], priority = 3)]
     fn ble_timer(c: ble_timer::Context) {
         let timer = c.shared.ble_ll.timer();
         if !timer.is_interrupt_pending() {
@@ -286,10 +286,7 @@ mod app {
         let cmd = c.shared.ble_ll.update_timer(&mut *c.shared.radio);
         c.shared.radio.configure_receiver(cmd.radio);
 
-        c.shared
-            .ble_ll
-            .timer()
-            .configure_interrupt(cmd.next_update);
+        c.shared.ble_ll.timer().configure_interrupt(cmd.next_update);
 
         if cmd.queued_work {
             // If there's any lower-priority work to be done, ensure that happens.
@@ -299,7 +296,7 @@ mod app {
     }
 
     /// Lower-priority task spawned from RADIO and TIMER2 interrupts.
-    #[task(shared = [ble_r], priority = 3)]
+    #[task(shared = [ble_r], priority = 2)]
     fn ble_worker(c: ble_worker::Context) {
         // Fully drain the packet queue
         while c.shared.ble_r.has_work() {
@@ -342,7 +339,7 @@ mod app {
 
     /// Fetch the battery status from the hardware. Update the text if
     /// something changed.
-    #[task(shared = [backlight, battery], priority = 2)]
+    #[task(shared = [backlight, battery], priority = 3)]
     fn update_battery_status(mut c: update_battery_status::Context) {
         let mut inhibit = false;
         c.shared.backlight.lock(|bl| {
@@ -360,7 +357,7 @@ mod app {
     }
 
     /// Show the battery status on the LCD.
-    #[task(shared = [battery, display], priority = 2)]
+    #[task(shared = [battery, display], priority = 3)]
     fn show_battery_status(mut c: show_battery_status::Context) {
         let voltage = c.shared.battery.voltage();
         let charging = c.shared.battery.is_charging();
