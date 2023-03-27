@@ -54,7 +54,7 @@ impl Display {
         mut delay: TimerDelay,
     ) -> Self {
         let lcd = Builder::st7789(SPIInterface::new(spim, dc, cs))
-            .with_display_size(240, 240)
+            .with_display_size(LCD_W, LCD_H)
             .with_orientation(Orientation::Portrait(false))
             .init(&mut delay, Some(rst)).unwrap();
 
