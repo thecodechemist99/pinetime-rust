@@ -21,7 +21,7 @@ fn main() {
     // create rs file with current UTC time
     File::create(out.join("utc.rs"))
       .unwrap()
-      .write_fmt(format_args!("const UTC_TIME: i64 = {:?};", chrono::offset::Local::now().timestamp()))
+      .write_fmt(format_args!("const UTC_EPOCH: i64 = {:?};", chrono::offset::Local::now().timestamp()))
       .unwrap();
 
     // By default, Cargo will re-run a build script whenever any file in the project changes.
