@@ -25,10 +25,8 @@ debouncr = "0.2.2"
 # nrf-softdevice = "0.0.0"
 # rubble = "0.0.4"
 # rubble-nrf5x = { version = "0.0.4", features = ["52832"] }
-# rubble = { git = "https://github.com/petterhs/rubble", dir = "tree/master/rubble" }
-# rubble-nrf5x = { git = "https://github.com/petterhs/rubble", dir = "tree/master/rubble-nrf5x", features = ["52832"] }
-rubble = { path = "./libs/rubble/rubble" }
-rubble-nrf5x = { path = "./libs/rubble/rubble-nrf5x", features = ["52832"] }
+rubble = { git = "https://github.com/thecodechemist99/rubble", dir = "tree/master/rubble" }
+rubble-nrf5x = { git = "https://github.com/thecodechemist99/rubble", dir = "tree/master/rubble-nrf5x", features = ["52832"] }
 
 # Graphics
 chrono = { version = "0.4.24", default-features = false }
@@ -45,8 +43,8 @@ defmt-rtt = "0.4.0"
 panic-rtt-target = { version = "0.1.2", features = ["cortex-m"] }
 
 [profile.dev]
-opt-level = "z"
-strip = false
+# opt-level = "z"
+# strip = false
 
 [profile.release]
 opt-level = "z"

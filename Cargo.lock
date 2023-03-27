@@ -897,6 +897,7 @@ dependencies = [
 [[package]]
 name = "rubble"
 version = "0.0.4"
+source = "git+https://github.com/thecodechemist99/rubble#a0c43ef51dc4a710554bfab0c09b59bb6985e2d3"
 dependencies = [
  "bitflags 2.0.2",
  "defmt",
@@ -910,6 +911,7 @@ dependencies = [
 [[package]]
 name = "rubble-nrf5x"
 version = "0.0.4"
+source = "git+https://github.com/thecodechemist99/rubble#a0c43ef51dc4a710554bfab0c09b59bb6985e2d3"
 dependencies = [
  "nrf52832-pac",
  "rubble",
