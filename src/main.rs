@@ -3,7 +3,7 @@
 
 mod backlight;
 mod battery;
-mod bluetooth;
+// mod bluetooth;
 mod delay;
 mod display;
 mod monotonic_nrf52;
@@ -35,7 +35,7 @@ mod app {
     // Crate
     use crate::backlight::Backlight;
     use crate::battery::BatteryStatus;
-    use crate::bluetooth::BLE;
+    // use crate::bluetooth::BLE;
     use crate::delay::TimerDelay;
     use crate::display::Display;
     use crate::monotonic_nrf52::MonoTimer;
@@ -46,6 +46,30 @@ mod app {
 
     // Include current utc time timestamp at compile time
     include!(concat!(env!("OUT_DIR"), "/utc.rs"));
+
+
+    use rubble::{config::Config};
+    use rubble::gatt::BatteryServiceAttrs;
+    use rubble::l2cap::{BleChannelMap, L2CAPState};
+    use rubble::link::ad_structure::AdStructure;
+    use rubble::link::queue::{PacketQueue, SimpleQueue};
+    use rubble::link::{DeviceAddress, LinkLayer, Responder, MIN_PDU_BUF};
+    use rubble::security::NoSecurity;
+    use rubble::time::{Duration as RubbleDuration};
+    use rubble_nrf5x::radio::{BleRadio, PacketBuffer};
+    use rubble_nrf5x::timer::BleTimer;
+    use rubble_nrf5x::utils::get_device_address;
+
+    pub struct BleConfig {}
+
+    impl Config for BleConfig {
+        type Timer = BleTimer<pac::TIMER2>;
+        type Transmitter = BleRadio;
+        type ChannelMapper = BleChannelMap<BatteryServiceAttrs, NoSecurity>;
+        type PacketQueue = &'static mut SimpleQueue;
+    }
+
+
 
     #[shared]
     struct Shared {
@@ -64,7 +88,15 @@ mod app {
     #[monotonic(binds = TIMER1, default = true)]
     type Mono = MonoTimer<hal::pac::TIMER1>;
 
-    #[init]
+    #[init(
+        local = [
+            // BLE
+            ble_tx_buf: PacketBuffer = [0; MIN_PDU_BUF],
+            ble_rx_buf: PacketBuffer = [0; MIN_PDU_BUF],
+            tx_queue: SimpleQueue = SimpleQueue::new(),
+            rx_queue: SimpleQueue = SimpleQueue::new()
+        ]
+    )]
     fn init(c: init::Context) -> (Shared, Local, init::Monotonics) {
         // Destructure device peripherals
         let pac::Peripherals {
@@ -91,8 +123,45 @@ mod app {
         // Initialize monotonic timer on TIMER0 (for RTIC)
         let mono = MonoTimer::new(TIMER1);
 
-        // Initialize BLE
-        let ble = BLE::init(&FICR, RADIO, TIMER2);
+        // Initialize BLE timer on TIMER2
+        let ble_timer = BleTimer::init(TIMER2);
+
+        // Get bluetooth device address
+        let device_address = get_device_address();
+        defmt::info!("Bluetooth device address: {:?}", defmt::Debug2Format(&device_address));
+
+        // Initialize radio
+        let mut radio = BleRadio::new(
+            RADIO,
+            &FICR,
+            c.local.ble_tx_buf,
+            c.local.ble_rx_buf,
+        );
+        
+        // Create bluetooth TX/RX queues
+        let (tx, tx_cons) = c.local.tx_queue.split();
+        let (rx_prod, rx) = c.local.rx_queue.split();
+        
+        // Create the actual BLE stack objects
+        let mut ble_ll: LinkLayer<BleConfig> = LinkLayer::new(device_address, ble_timer);
+        let mut ble_r: Responder<BleConfig> = Responder::new(
+            tx,
+            rx,
+            L2CAPState::new(BleChannelMap::with_attributes(BatteryServiceAttrs::new())),
+        );
+
+        // Send advertisement and set up regular interrupt
+        let next_update = ble_ll
+            .start_advertise(
+                RubbleDuration::from_millis(200),
+                &[AdStructure::CompleteLocalName("Rusty PineTime")],
+                &mut radio,
+                tx_cons,
+                rx_prod,
+            )
+            .unwrap();
+
+        ble_ll.timer().configure_interrupt(next_update);
 
         // Initialize GPIO peripheral
         let gpio = hal::gpio::p0::Parts::new(P0);

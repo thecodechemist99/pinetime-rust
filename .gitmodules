@@ -1,0 +1,3 @@
+[submodule "libs/rubble"]
+	path = libs/rubble
+	url = https://github.com/thecodechemist99/rubble

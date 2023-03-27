@@ -29,8 +29,11 @@ impl Config for BleConfig {
 
 #[allow(unused)]
 pub struct BLE {
-    /// BLE timer
-    // ble_timer: <BleConfig as rubble::config::Config>::Timer,
+    /// BLE RX buffer
+    ble_rx_buf: PacketBuffer,
+
+    /// BLE TX buffer
+    ble_tx_buf: PacketBuffer,
 
     /// Bluetooth device address
     device_address: DeviceAddress,
@@ -53,16 +56,16 @@ impl BLE {
 
         // Get bluetooth device address
         let device_address = get_device_address();
-        defmt::info!("Bluetooth device address: {:?}", device_address);
+        // defmt::info!("Bluetooth device address: {:?}", device_address);
 
         // Initialize radio
-        let ble_tx_buf: PacketBuffer = [0; MIN_PDU_BUF];
-        let ble_rx_buf: PacketBuffer = [0; MIN_PDU_BUF];
+        let mut ble_tx_buf: PacketBuffer = [0; MIN_PDU_BUF];
+        let mut ble_rx_buf: PacketBuffer = [0; MIN_PDU_BUF];
 
-        let mut radio = BleRadio::new(
+        let radio = BleRadio::new(
             radio,
             ficr,
-            &mut ble_tx_buf,
+            & mut ble_tx_buf,
             &mut ble_rx_buf,
         );
         
@@ -82,17 +85,18 @@ impl BLE {
         );
 
         // Send advertisement and set up regular interrupt
-        let next_update = ble_ll
-            .start_advertise(
-                RubbleDuration::from_millis(200),
-                &[AdStructure::CompleteLocalName("Rusty PineTime")],
-                &mut radio,
-                tx_cons,
-                rx_prod,
-            )
-            .unwrap();
-        ble_ll.timer().configure_interrupt(next_update);
+        // let next_update = ble_ll
+        //     .start_advertise(
+        //         RubbleDuration::from_millis(200),
+        //         &[AdStructure::CompleteLocalName("Rusty PineTime")],
+        //         &mut radio,
+        //         tx_cons,
+        //         rx_prod,
+        //     )
+        //     .unwrap();
 
-        Self { device_address, radio, ble_ll, ble_r }
+        // ble_ll.timer().configure_interrupt(next_update);
+
+        Self { ble_rx_buf, ble_tx_buf, device_address, radio, ble_ll, ble_r }
     }
 }
