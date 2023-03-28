@@ -33,6 +33,9 @@ fugit = "0.3"
 mipidsi = "0.6"
 profont = "0.6"
 
+# Touch control
+cst816s = "0.1"
+
 # Debug probe
 defmt = "0.3"
 defmt-rtt = "0.4"

@@ -6,6 +6,7 @@ mod battery;
 mod delay;
 mod display;
 mod monotonic_nrf52;
+mod vibration;
 
 #[rtic::app(device = nrf52832_hal::pac, peripherals = true, dispatchers = [SWI0_EGU0, SWI1_EGU1, SWI2_EGU2, SWI3_EGU3, SWI4_EGU4, SWI5_EGU5])]
 mod app {
@@ -25,6 +26,7 @@ mod app {
     }
 
     // Device
+    use cst816s::{TouchEvent, TouchGesture, CST816S};
     use debouncr::{debounce_6, Debouncer, Edge, Repeat6};
     use nrf52832_hal::{
         self as hal,
@@ -67,6 +69,7 @@ mod app {
     use crate::delay::TimerDelay;
     use crate::display::Display;
     use crate::monotonic_nrf52::MonoTimer;
+    use crate::vibration::VibrationMotor;
 
     // Others
     use chrono::{NaiveDateTime, Timelike};
@@ -79,7 +82,6 @@ mod app {
 
     #[shared]
     struct Shared {
-        backlight: Backlight,
         #[lock_free]
         ble_ll: LinkLayer<BleConfig>,
         display: Display,
@@ -91,6 +93,7 @@ mod app {
 
     #[local]
     struct Local {
+        backlight: Backlight,
         battery: BatteryStatus,
         ble_r: Responder<BleConfig>,
         button: Pin<Input<Floating>>,
@@ -121,6 +124,7 @@ mod app {
             TIMER0,
             TIMER1,
             TIMER2,
+            TWIM1,
             ..
         } = c.device;
 
@@ -129,8 +133,8 @@ mod app {
         // switch to the external HF oscillator. This is needed for Bluetooth to work.
         let _clocks = hal::clocks::Clocks::new(CLOCK).enable_ext_hfosc();
 
-        // Initialize Delay on TIMER0
-        let delay = TimerDelay::new(TIMER0);
+        // Initialize Delays on TIMER0 and TIMER
+        let mut delay = TimerDelay::new(TIMER0);
 
         // Initialize monotonic timer on TIMER0 (for RTIC)
         let mono = MonoTimer::new(TIMER1);
@@ -165,6 +169,12 @@ mod app {
         // Initialize Button
         let _ = gpio.p0_15.into_push_pull_output(Level::High);
         let button = gpio.p0_13.into_floating_input().degrade();
+
+        // Initialize vibration motor
+        let vibration = VibrationMotor::init(
+            gpio.p0_16.into_push_pull_output(Level::High).degrade(),
+            &mut delay,
+        );
 
         // Get bluetooth device address
         let device_address = get_device_address();
@@ -203,6 +213,18 @@ mod app {
 
         ble_ll.timer().configure_interrupt(next_update);
 
+        // Initialize I2C
+        let i2c_pins = hal::twim::Pins {
+            scl: gpio.p0_07.into_floating_input().degrade(),
+            sda: gpio.p0_06.into_floating_input().degrade(),
+        };
+
+        let i2c = hal::Twim::new(
+            TWIM1,
+            i2c_pins,
+            hal::twim::Frequency::K400,
+        );
+
         // Initialize SPI
         let spi_pins = hal::spim::Pins {
             sck: Some(gpio.p0_02.into_push_pull_output(Level::Low).degrade()),
@@ -227,12 +249,22 @@ mod app {
             gpio.p0_25.into_push_pull_output(Level::Low).degrade(),
             gpio.p0_18.into_push_pull_output(Level::Low).degrade(),
             gpio.p0_26.into_push_pull_output(Level::Low).degrade(),
-            delay,
+            &mut delay,
         );
         #[cfg(debug_assertions)]
         {
             backlight.set(2).unwrap();
         }
+
+        // Initialize touch controller
+        let mut touchpad = CST816S::new(
+            i2c,
+            // setup touchpad external interrupt pin: P0.28/AIN4 (TP_INT)
+            gpio.p0_28.into_pullup_input().degrade(),
+            // setup touchpad reset pin: P0.10/NFC2 (TP_RESET)
+            gpio.p0_10.into_push_pull_output(Level::High).degrade(),
+        );
+        touchpad.setup(&mut delay).unwrap();
 
         // Schedule tasks immediately
         poll_button::spawn().unwrap();
@@ -244,13 +276,13 @@ mod app {
 
         (
             Shared {
-                backlight,
                 ble_ll,
                 display,
                 draw_ui: true,
                 radio,
             },
             Local {
+                backlight,
                 battery,
                 ble_r,
                 button,
@@ -262,7 +294,7 @@ mod app {
 
     /// Hook up the RADIO interrupt to the Rubble BLE stack.
     #[task(binds = RADIO, shared = [radio, ble_ll], priority = 3)]
-    fn radio(mut c: radio::Context) {
+    fn radio(c: radio::Context) {
         let ble_ll = c.shared.ble_ll;
         if let Some(cmd) = 
             c.shared.radio.recv_interrupt(ble_ll.timer().now(), ble_ll)
@@ -324,20 +356,40 @@ mod app {
     }
 
     /// Called when button is pressed without bouncing for 12 (6 * 2) ms.
-    #[task(shared = [backlight], priority = 2)]
-    fn button_pressed(mut c: button_pressed::Context) {
-        c.shared.backlight.lock(|bl| {
-            // Clear and re-enable display if turned on again
-            if bl.get_brightness() == 0 {
-                // *c.shared.draw_ui = true;
-            }
-            if bl.get_brightness() < 7 {
+    #[task(priority = 2)]
+    fn button_pressed(_c: button_pressed::Context) {
+        update_backlight::spawn().unwrap();
+    }
+
+    /// Update backlight upon button pressed
+    #[task(local = [backlight], priority = 2)]
+    fn update_backlight(c: update_backlight::Context) {
+        let bl = c.local.backlight;
+        match bl.get_brightness() {
+            0 => {
                 bl.brighter().unwrap();
-            } else {
+                enable_ui::spawn(true).unwrap();
+            },
+            1..=6 => bl.brighter().unwrap(),
+            _ => {
                 bl.off();
-                // *c.shared.draw_ui = false;
-            }
-        });
+                enable_ui::spawn(false).unwrap();
+            },
+        };
+    }
+
+    /// Enable or disable UI.
+    #[task(shared = [display, draw_ui], priority = 3)]
+    fn enable_ui(mut c: enable_ui::Context, enable: bool) {
+        if enable {
+            *c.shared.draw_ui = true;
+        } else {
+            *c.shared.draw_ui = false;
+            c.shared.display.lock(|d| {
+                d.clear();
+            });
+
+        }
     }
 
     /// Fetch the battery status from the hardware. Update the text if
@@ -347,7 +399,7 @@ mod app {
         let changed = c.local.battery.update().unwrap();
         if changed && *c.shared.draw_ui {
             show_battery_status::spawn(
-                c.local.battery.voltage(),
+                c.local.battery.percent(),
                 c.local.battery.is_charging()
             ).unwrap();
         }
@@ -358,16 +410,16 @@ mod app {
 
     /// Show the battery status on the LCD.
     #[task(shared = [display], priority = 2)]
-    fn show_battery_status(mut c: show_battery_status::Context, voltage: u8, charging: bool) {
+    fn show_battery_status(mut c: show_battery_status::Context, percentage: u8, charging: bool) {
         defmt::info!(
             "Battery status: {} ({})",
-            voltage,
+            percentage,
             if charging { "charging" } else { "discharging" },
         );
 
         // Update UI
         c.shared.display.lock(|d| {
-            d.update_battery_status(voltage, charging);
+            d.update_battery_status(percentage, charging);
         });
     }
 
