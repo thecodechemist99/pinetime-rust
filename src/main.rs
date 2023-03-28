@@ -17,6 +17,7 @@ mod app {
     };
 
     /// Terminates the application and makes `probe-run` exit with exit-code = 0
+    #[cfg(debug_assertions)]
     pub fn exit() -> ! {
         loop {
             cortex_m::asm::bkpt();
@@ -71,7 +72,7 @@ mod app {
     use chrono::{NaiveDateTime, Timelike};
     use fugit::{ExtU32, TimerInstantU32 as InstantU32};
 
-    // Include current utc time timestamp at compile time
+    // Include current UTC epoch at compile time
     include!(concat!(env!("OUT_DIR"), "/utc.rs"));
 
     const TIMEZONE: i32 = 2 * 3_600;
