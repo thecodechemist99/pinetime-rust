@@ -51,12 +51,12 @@ impl Display {
         cs: Pin<Output<PushPull>>,
         dc: Pin<Output<PushPull>>,
         rst: Pin<Output<PushPull>>,
-        mut delay: TimerDelay,
+        delay: &mut TimerDelay,
     ) -> Self {
         let lcd = Builder::st7789(SPIInterface::new(spim, dc, cs))
             .with_display_size(LCD_W, LCD_H)
             .with_orientation(Orientation::Portrait(false))
-            .init(&mut delay, Some(rst)).unwrap();
+            .init(delay, Some(rst)).unwrap();
 
        let mut display = Self {
             lcd,
@@ -71,7 +71,7 @@ impl Display {
     }
 
     /// Update the battery status
-    pub fn update_battery_status(&mut self, voltage: u8, charging: bool) {
+    pub fn update_battery_status(&mut self, percent: u8, charging: bool) {
         // Choose text style
         let text_style = MonoTextStyleBuilder::new()
             .font(&FONT_10X20)
@@ -80,7 +80,7 @@ impl Display {
     
         // Show battery status in bottom left corner
         let mut buf = [0u8; 6];
-        let str = format_no_std::show(&mut buf, format_args!("{:.1}V/{}", voltage as f32 * 0.1, if charging { "C" } else { "D" })).unwrap();
+        let str = format_no_std::show(&mut buf, format_args!("{}%/{}", percent, if charging { "C" } else { "D" })).unwrap();
         let text = Text::new(str, Point::zero(), text_style.build());
         let translation = Point::new(
             MARGIN as i32,
