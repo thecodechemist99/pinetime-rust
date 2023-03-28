@@ -6,7 +6,7 @@ use nrf52832_hal::{
     spim::Spim,
 };
 
-use chrono::{Timelike, NaiveDateTime};
+use chrono::{FixedOffset, NaiveDateTime, Timelike, TimeZone};
 use display_interface_spi::SPIInterface;
 use embedded_graphics::{
     prelude::*,
@@ -90,7 +90,10 @@ impl Display {
     }
 
     /// Update the time display
-    pub fn update_time(&mut self, time: NaiveDateTime) {
+    pub fn update_time(&mut self, utc: NaiveDateTime, timezone: i32) {
+        // Calculate local time
+        let date_time = FixedOffset::east_opt(timezone).unwrap().from_utc_datetime(&utc);
+
         // Choose text style
         let text_style = MonoTextStyleBuilder::new()
             .font(&PROFONT_24_POINT)
@@ -99,7 +102,7 @@ impl Display {
     
         // Show time in the center 
         let mut buf = [0u8; 8];
-        let str = format_no_std::show(&mut buf, format_args!("{:02}:{:02}", time.hour() + 1, time.minute())).unwrap();
+        let str = format_no_std::show(&mut buf, format_args!("{:02}:{:02}", date_time.hour(), date_time.minute())).unwrap();
         let text = Text::new(str, Point::zero(), text_style.build());
         let translation = Point::new(
             LCD_W as i32 / 2 - 40,
@@ -109,9 +112,9 @@ impl Display {
 
         // Calculate seconds dot position
         let dot_d: u32 = 14;
-        let dot_pos = calc_dot_pos(dot_d as i32, time.second() as i32);
-        let prev_dot_pos = if time.second() > 0 {
-            calc_dot_pos(dot_d as i32, time.second() as i32 - 1)
+        let dot_pos = calc_dot_pos(dot_d as i32, date_time.second() as i32);
+        let prev_dot_pos = if date_time.second() > 0 {
+            calc_dot_pos(dot_d as i32, date_time.second() as i32 - 1)
         } else {
             calc_dot_pos(dot_d as i32, 59)
         };

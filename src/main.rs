@@ -74,6 +74,8 @@ mod app {
     // Include current utc time timestamp at compile time
     include!(concat!(env!("OUT_DIR"), "/utc.rs"));
 
+    const TIMEZONE: i32 = 2 * 3_600;
+
     #[shared]
     struct Shared {
         backlight: Backlight,
@@ -326,9 +328,17 @@ mod app {
     }
 
     /// Called when button is pressed without bouncing for 12 (6 * 2) ms.
-    #[task(shared = [backlight], priority = 2)]
+    #[task(shared = [backlight, display], priority = 2)]
     fn button_pressed(mut c: button_pressed::Context) {
         c.shared.backlight.lock(|bl| {
+            // Clear display if turned on again
+            if bl.get_brightness() == 0 {
+                c.shared.display.lock(|d| {
+                    d.clear();
+                    show_battery_status::spawn().unwrap();
+                });
+            }
+
             if bl.get_brightness() < 7 {
                 bl.brighter().unwrap();
             } else {
@@ -379,25 +389,25 @@ mod app {
     fn update_time(mut c: update_time::Context) {
         let now = monotonics::now();
 
-        // let mut inhibit = false;
-        // c.shared.backlight.lock(|bl| {
-        //     if bl.get_brightness() == 0 {
-        //         inhibit = true;
-        //     }
-        // });
+        let mut inhibit = false;
+        c.shared.backlight.lock(|bl| {
+            if bl.get_brightness() == 0 {
+                inhibit = true;
+            }
+        });
 
-        // if !inhibit {
-            let time = NaiveDateTime::from_timestamp_opt(
+        if !inhibit {
+            let utc_date_time = NaiveDateTime::from_timestamp_opt(
                 UTC_EPOCH + InstantU32::duration_since_epoch(now).to_secs() as i64,
                 0).unwrap();
-    
-            defmt::debug!("Time: {}:{}:{}", time.hour() + 1, time.minute(), time.second());
+
+            defmt::debug!("UTC time: {}:{}:{}", utc_date_time.hour() + 1, utc_date_time.minute(), utc_date_time.second());
     
             // Show battery status in top right corner
             c.shared.display.lock(|display| {
-                Display::update_time(display, time);
+                Display::update_time(display, utc_date_time, TIMEZONE);
             });
-        // }
+        }
 
         // Re-schedule the timer interrupt
         update_time::spawn_at(now + 1.secs()).unwrap();
