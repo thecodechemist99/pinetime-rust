@@ -81,18 +81,18 @@ mod app {
     struct Shared {
         backlight: Backlight,
         #[lock_free]
-        battery: BatteryStatus,
-        #[lock_free]
         ble_ll: LinkLayer<BleConfig>,
-        #[lock_free]
-        ble_r: Responder<BleConfig>,
         display: Display,
+        #[lock_free]
+        draw_ui: bool,
         #[lock_free]
         radio: BleRadio,
     }
 
     #[local]
     struct Local {
+        battery: BatteryStatus,
+        ble_r: Responder<BleConfig>,
         button: Pin<Input<Floating>>,
         button_debouncer: Debouncer<u8, Repeat6>,
     }
@@ -245,13 +245,14 @@ mod app {
         (
             Shared {
                 backlight,
-                battery,
                 ble_ll,
-                ble_r,
                 display,
+                draw_ui: true,
                 radio,
             },
             Local {
+                battery,
+                ble_r,
                 button,
                 button_debouncer: debounce_6(false),
             },
@@ -261,18 +262,18 @@ mod app {
 
     /// Hook up the RADIO interrupt to the Rubble BLE stack.
     #[task(binds = RADIO, shared = [radio, ble_ll], priority = 3)]
-    fn radio(c: radio::Context) {
-        let ble_ll: &mut LinkLayer<BleConfig> = c.shared.ble_ll;
+    fn radio(mut c: radio::Context) {
+        let ble_ll = c.shared.ble_ll;
         if let Some(cmd) = 
             c.shared.radio.recv_interrupt(ble_ll.timer().now(), ble_ll)
         {
             c.shared.radio.configure_receiver(cmd.radio);
             ble_ll.timer().configure_interrupt(cmd.next_update);
-
+            
             if cmd.queued_work {
                 // If there's any lower-priority work to be done, ensure that happens.
                 // If we fail to spawn the task, it's already scheduled.
-                ble_worker::spawn().ok().unwrap();
+                ble_worker::spawn().ok();
             }
         }
     }
@@ -286,7 +287,7 @@ mod app {
         }
         timer.clear_interrupt();
 
-        let cmd = c.shared.ble_ll.update_timer(&mut *c.shared.radio);
+        let cmd = c.shared.ble_ll.update_timer(c.shared.radio);
         c.shared.radio.configure_receiver(cmd.radio);
 
         c.shared.ble_ll.timer().configure_interrupt(cmd.next_update);
@@ -294,30 +295,24 @@ mod app {
         if cmd.queued_work {
             // If there's any lower-priority work to be done, ensure that happens.
             // If we fail to spawn the task, it's already scheduled.
-            ble_worker::spawn().ok().unwrap();
+            ble_worker::spawn().ok();
         }
     }
 
     /// Lower-priority task spawned from RADIO and TIMER2 interrupts.
-    #[task(shared = [ble_r], priority = 2)]
+    #[task(local = [ble_r], priority = 2)]
     fn ble_worker(c: ble_worker::Context) {
         // Fully drain the packet queue
-        while c.shared.ble_r.has_work() {
-            c.shared.ble_r.process_one().unwrap();
+        while c.local.ble_r.has_work() {
+            c.local.ble_r.process_one().unwrap();
         }
     }
 
     /// Polls the button state every 2ms
     #[task(local = [button, button_debouncer], priority = 3)]
     fn poll_button(c: poll_button::Context) {
-        let poll_button::LocalResources {
-            button,
-            button_debouncer,
-        } = c.local;
-
-        // Poll button
-        let pressed = button.is_high().unwrap();
-        let edge = button_debouncer.update(pressed);
+        let pressed = c.local.button.is_high().unwrap();
+        let edge = c.local.button_debouncer.update(pressed);
 
         if edge == Some(Edge::Rising) {
             defmt::info!("Button pressed");
@@ -329,88 +324,80 @@ mod app {
     }
 
     /// Called when button is pressed without bouncing for 12 (6 * 2) ms.
-    #[task(shared = [backlight, display], priority = 2)]
+    #[task(shared = [backlight], priority = 2)]
     fn button_pressed(mut c: button_pressed::Context) {
         c.shared.backlight.lock(|bl| {
-            // Clear display if turned on again
+            // Clear and re-enable display if turned on again
             if bl.get_brightness() == 0 {
-                c.shared.display.lock(|d| {
-                    d.clear();
-                    show_battery_status::spawn().unwrap();
-                });
+                // *c.shared.draw_ui = true;
             }
-
             if bl.get_brightness() < 7 {
                 bl.brighter().unwrap();
             } else {
                 bl.off();
+                // *c.shared.draw_ui = false;
             }
         });
     }
 
     /// Fetch the battery status from the hardware. Update the text if
-    /// something changed.
-    #[task(shared = [backlight, battery], priority = 3)]
-    fn update_battery_status(mut c: update_battery_status::Context) {
-        let mut inhibit = false;
-        c.shared.backlight.lock(|bl| {
-            if bl.get_brightness() == 0 {
-                inhibit = true;
-            }
-        });
-
-        if c.shared.battery.update().unwrap() && !inhibit {
-            show_battery_status::spawn().unwrap();
+    /// ui is enabled and something changed.
+    #[task(local = [battery], shared = [draw_ui], priority = 3)]
+    fn update_battery_status(c: update_battery_status::Context) {
+        let changed = c.local.battery.update().unwrap();
+        if changed && *c.shared.draw_ui {
+            show_battery_status::spawn(
+                c.local.battery.voltage(),
+                c.local.battery.is_charging()
+            ).unwrap();
         }
-
+        
         // Re-schedule the timer interrupt in 1s
         update_battery_status::spawn_after(1.secs()).unwrap();
     }
 
     /// Show the battery status on the LCD.
-    #[task(shared = [battery, display], priority = 3)]
-    fn show_battery_status(mut c: show_battery_status::Context) {
-        let voltage = c.shared.battery.voltage();
-        let charging = c.shared.battery.is_charging();
-
+    #[task(shared = [display], priority = 2)]
+    fn show_battery_status(mut c: show_battery_status::Context, voltage: u8, charging: bool) {
         defmt::info!(
             "Battery status: {} ({})",
             voltage,
             if charging { "charging" } else { "discharging" },
         );
 
-        // Show battery status in top right corner
-        c.shared.display.lock(|display| {
-            Display::update_battery_status(display, voltage, charging);
+        // Update UI
+        c.shared.display.lock(|d| {
+            d.update_battery_status(voltage, charging);
         });
     }
 
-    /// Show the current time on the LCD.
-    #[task(shared = [backlight, display], priority = 3)]
-    fn update_time(mut c: update_time::Context) {
+    /// Get the current time Instant. Update the text if
+    /// ui is enabled and something changed.
+    #[task(shared = [draw_ui], priority = 3)]
+    fn update_time(c: update_time::Context) {
         let now = monotonics::now();
 
-        let mut inhibit = false;
-        c.shared.backlight.lock(|bl| {
-            if bl.get_brightness() == 0 {
-                inhibit = true;
-            }
-        });
-
-        if !inhibit {
-            let utc_date_time = NaiveDateTime::from_timestamp_opt(
+        if *c.shared.draw_ui {
+            let utc = NaiveDateTime::from_timestamp_opt(
                 UTC_EPOCH + InstantU32::duration_since_epoch(now).to_secs() as i64,
-                0).unwrap();
-
-            defmt::debug!("UTC time: {}:{}:{}", utc_date_time.hour() + 1, utc_date_time.minute(), utc_date_time.second());
-    
-            // Show battery status in top right corner
-            c.shared.display.lock(|display| {
-                Display::update_time(display, utc_date_time, TIMEZONE);
-            });
+                0
+            ).unwrap();
+            show_time::spawn(utc).unwrap();
         }
 
         // Re-schedule the timer interrupt
         update_time::spawn_at(now + 1.secs()).unwrap();
+    }
+
+
+    /// Show the current time on the LCD.
+    #[task(shared = [display], priority = 2)]
+    fn show_time(mut c: show_time::Context, utc: NaiveDateTime) {
+        defmt::debug!("UTC time: {}:{}:{}", utc.hour(), utc.minute(), utc.second());
+    
+        // Update UI
+        c.shared.display.lock(|display| {
+            display.update_time(utc, TIMEZONE);
+        });
     }
 }
