@@ -39,8 +39,8 @@ defmt-rtt = "0.4"
 panic-probe = { version = "0.3", features = ["print-defmt"] }
 
 [profile.dev]
-# opt-level = "z"
-# strip = false
+opt-level = "z"
+strip = false
 
 [profile.release]
 opt-level = "z"
