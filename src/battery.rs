@@ -69,7 +69,17 @@ impl BatteryStatus {
     /// This returns the stored value. To fetch current data, call `update()` first.
     #[allow(unused)]
     pub fn percent(&self) -> u8 {
-        unimplemented!();
+        match self.voltage {
+            42 => 100,
+            41 => 90,
+            40 => 80,
+            39 => 70,
+            38 => 60,
+            37 => 50,
+            36 => 30,
+            35 => 10,
+            _ => 0,
+        }
     }
 
     /// Return the current battery voltage in 0.1 volts.
