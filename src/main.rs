@@ -1,13 +1,8 @@
 #![no_std]
 #![no_main]
 
-mod backlight;
-mod battery;
-// mod timer_delay;
-mod delay;
-mod display;
-mod monotonic_nrf52;
-mod vibration;
+mod system;
+mod peripherals;
 
 #[rtic::app(device = nrf52832_hal::pac, peripherals = true, dispatchers = [SWI0_EGU0, SWI1_EGU1, SWI2_EGU2, SWI3_EGU3, SWI4_EGU4, SWI5_EGU5])]
 mod app {
@@ -65,13 +60,16 @@ mod app {
     }
 
     // Crate
-    use crate::backlight::Backlight;
-    use crate::battery::BatteryStatus;
-    // use crate::timer_delay::TimerDelay;
-    use crate::delay::Delay;
-    use crate::display::Display;
-    use crate::monotonic_nrf52::MonoTimer;
-    use crate::vibration::VibrationMotor;
+    use crate::peripherals::{
+        backlight::Backlight,
+        battery::BatteryStatus,
+        display::Display,
+        vibration::VibrationMotor,
+    };
+    use crate::system::{
+        delay::Delay,
+        monotonics::MonoTimer,
+    };
 
     // Others
     use chrono::{NaiveDateTime, Timelike};
@@ -105,6 +103,7 @@ mod app {
         ble_r: Responder<BleConfig>,
         button: Pin<Input<Floating>>,
         button_debouncer: Debouncer<u8, Repeat6>,
+        vibration: VibrationMotor,
     }
 
     #[monotonic(binds = TIMER1, default = true)]
@@ -179,7 +178,7 @@ mod app {
         let button = gpio.p0_13.into_floating_input().degrade();
 
         // Initialize vibration motor
-        let mut vibration = VibrationMotor::init(
+        let vibration = VibrationMotor::init(
             gpio.p0_16.into_push_pull_output(Level::High).degrade(),
             &mut delay,
         );
@@ -277,12 +276,11 @@ mod app {
         // Schedule tasks immediately
         poll_button::spawn().unwrap();
         update_battery_status::spawn().unwrap();
+        notify::spawn().unwrap();
 
         // Schedule time measurement task to start exactly 1s after boot
         let since_boot = InstantU32::duration_since_epoch(monotonics::now());
         update_time::spawn_at(monotonics::now() + (1.secs() - since_boot)).unwrap();
-
-        vibration.pulse_once(None);
 
         (
             Shared {
@@ -297,6 +295,7 @@ mod app {
                 ble_r,
                 button,
                 button_debouncer: debounce_6(false),
+                vibration,
             },
             init::Monotonics(mono),
         )
@@ -461,4 +460,10 @@ mod app {
             display.update_time(utc, TIMEZONE);
         });
     }
+
+    #[task(local = [vibration], priority = 2)]
+    fn notify(c: notify::Context) {
+        c.local.vibration.pulse_once(Some(200));
+    }
+
 }
