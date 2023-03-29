@@ -3,6 +3,7 @@
 
 mod backlight;
 mod battery;
+// mod timer_delay;
 mod delay;
 mod display;
 mod monotonic_nrf52;
@@ -66,7 +67,8 @@ mod app {
     // Crate
     use crate::backlight::Backlight;
     use crate::battery::BatteryStatus;
-    use crate::delay::TimerDelay;
+    // use crate::timer_delay::TimerDelay;
+    use crate::delay::Delay;
     use crate::display::Display;
     use crate::monotonic_nrf52::MonoTimer;
     use crate::vibration::VibrationMotor;
@@ -77,8 +79,13 @@ mod app {
 
     // Include current UTC epoch at compile time
     include!(concat!(env!("OUT_DIR"), "/utc.rs"));
-
     const TIMEZONE: i32 = 2 * 3_600;
+
+    // PineTime has a 32 MHz HSE (HFXO) and a 32.768 kHz LSE (LFXO)
+    #[allow(dead_code)]
+    const HFXO_FREQ_HZ: u32 = 32_000_000u32;
+    #[allow(dead_code)]
+    const LFXO_FREQ_HZ: u32 = 32_768u32;
 
     #[shared]
     struct Shared {
@@ -121,7 +128,7 @@ mod app {
             RADIO,
             SAADC,
             SPIM1,
-            TIMER0,
+            // TIMER0,
             TIMER1,
             TIMER2,
             TWIM1,
@@ -134,7 +141,8 @@ mod app {
         let _clocks = hal::clocks::Clocks::new(CLOCK).enable_ext_hfosc();
 
         // Initialize Delays on TIMER0 and TIMER
-        let mut delay = TimerDelay::new(TIMER0);
+        // let mut delay = TimerDelay::new(TIMER0);
+        let mut delay = Delay::new(HFXO_FREQ_HZ);
 
         // Initialize monotonic timer on TIMER0 (for RTIC)
         let mono = MonoTimer::new(TIMER1);
@@ -171,7 +179,7 @@ mod app {
         let button = gpio.p0_13.into_floating_input().degrade();
 
         // Initialize vibration motor
-        let vibration = VibrationMotor::init(
+        let mut vibration = VibrationMotor::init(
             gpio.p0_16.into_push_pull_output(Level::High).degrade(),
             &mut delay,
         );
@@ -273,6 +281,8 @@ mod app {
         // Schedule time measurement task to start exactly 1s after boot
         let since_boot = InstantU32::duration_since_epoch(monotonics::now());
         update_time::spawn_at(monotonics::now() + (1.secs() - since_boot)).unwrap();
+
+        vibration.pulse_once(None);
 
         (
             Shared {
@@ -440,7 +450,6 @@ mod app {
         // Re-schedule the timer interrupt
         update_time::spawn_at(now + 1.secs()).unwrap();
     }
-
 
     /// Show the current time on the LCD.
     #[task(shared = [display], priority = 2)]
