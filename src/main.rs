@@ -23,7 +23,7 @@ mod app {
 
     // Device
     use cst816s::{TouchEvent, TouchGesture, CST816S};
-    use debouncr::{debounce_6, Debouncer, Edge, Repeat6};
+    use debouncr::{debounce_2, Debouncer, Edge, Repeat2};
     use nrf52832_hal::{
         self as hal,
         gpio::{Floating, Input, Level, Output, Pin, PullUp, PushPull},
@@ -37,7 +37,7 @@ mod app {
         gatt::BatteryServiceAttrs,
         l2cap::{BleChannelMap, L2CAPState},
         link::{
-            ad_structure::AdStructure,
+            ad_structure::{AdStructure, Flags},
             queue::{PacketQueue, SimpleQueue},
             {LinkLayer, Responder, MIN_PDU_BUF},
         },
@@ -102,7 +102,7 @@ mod app {
         battery: BatteryStatus,
         ble_r: Responder<BleConfig>,
         button: Pin<Input<Floating>>,
-        button_debouncer: Debouncer<u8, Repeat6>,
+        button_debouncer: Debouncer<u8, Repeat2>,
         // touch: CST816S<hal::Twim<pac::TWIM1>, Pin<Input<PullUp>>, Pin<Output<PushPull>>>,
         vibration: VibrationMotor,
         int_pin: Pin<Input<PullUp>>,
@@ -184,7 +184,7 @@ mod app {
             &mut delay,
         );
 
-        // Get bluetooth device address
+                // Get bluetooth device address
         let device_address = get_device_address();
         defmt::info!("Bluetooth device address: {:?}", defmt::Debug2Format(&device_address));
 
@@ -207,19 +207,6 @@ mod app {
             rx,
             L2CAPState::new(BleChannelMap::with_attributes(BatteryServiceAttrs::new())),
         );
-
-        // Send advertisement and set up regular interrupt
-        let next_update = ble_ll
-            .start_advertise(
-                RubbleDuration::millis(200),
-                &[AdStructure::CompleteLocalName("Rusty PineTime")],
-                &mut radio,
-                tx_cons,
-                rx_prod,
-            )
-            .unwrap();
-
-        ble_ll.timer().configure_interrupt(next_update);
 
         // Initialize I2C
         let i2c_pins = hal::twim::Pins {
@@ -276,6 +263,22 @@ mod app {
         // );
         // touch.setup(&mut delay).unwrap();
 
+        // Send BLE advertisement and set up regular interrupt
+        let next_update = ble_ll
+            .start_advertise(
+                // Values below 295ms seem not to work, for those
+                // the timer interrupt is only triggered once
+                RubbleDuration::millis(200),
+                &[AdStructure::CompleteLocalName("Rusty PineTime")],
+                // &[AdStructure::Flags(Flags::LE_GENERAL_DISCOVERABLE), AdStructure::Flags(Flags::BR_EDR_NOT_SUPPORTED), AdStructure::CompleteLocalName("Rusty PineTime") ],
+                &mut radio,
+                tx_cons,
+                rx_prod,
+            )
+            .unwrap();
+
+        ble_ll.timer().configure_interrupt(next_update);
+
         // Schedule tasks immediately
         poll_button::spawn().unwrap();
         poll_touch::spawn().unwrap();
@@ -298,7 +301,7 @@ mod app {
                 battery,
                 ble_r,
                 button,
-                button_debouncer: debounce_6(false),
+                button_debouncer: debounce_2(false),
                 // touch,
                 vibration,
                 int_pin,
@@ -308,8 +311,9 @@ mod app {
     }
 
     /// Hook up the RADIO interrupt to the Rubble BLE stack.
-    #[task(binds = RADIO, shared = [radio, ble_ll], priority = 3)]
+    #[task(binds = RADIO, shared = [radio, ble_ll], priority = 4)]
     fn radio(c: radio::Context) {
+        // defmt::info!("BLE radio interrupt");
         let ble_ll = c.shared.ble_ll;
         if let Some(cmd) = 
             c.shared.radio.recv_interrupt(ble_ll.timer().now(), ble_ll)
@@ -326,8 +330,9 @@ mod app {
     }
 
     /// Hook up the TIMER2 interrupt to the Rubble BLE stack.
-    #[task(binds = TIMER2, shared = [radio, ble_ll], priority = 3)]
+    #[task(binds = TIMER2, shared = [radio, ble_ll], priority = 4)]
     fn ble_timer(c: ble_timer::Context) {
+        defmt::info!("BLE timer interrupt");
         let timer = c.shared.ble_ll.timer();
         if !timer.is_interrupt_pending() {
             return;
@@ -336,7 +341,6 @@ mod app {
 
         let cmd = c.shared.ble_ll.update_timer(c.shared.radio);
         c.shared.radio.configure_receiver(cmd.radio);
-
         c.shared.ble_ll.timer().configure_interrupt(cmd.next_update);
 
         if cmd.queued_work {
@@ -355,7 +359,7 @@ mod app {
         }
     }
 
-    /// Polls the button state every 2ms
+    /// Polls the button state every 10ms
     #[task(local = [button, button_debouncer], priority = 3)]
     fn poll_button(c: poll_button::Context) {
         let pressed = c.local.button.is_high().unwrap();
@@ -366,11 +370,11 @@ mod app {
             button_pressed::spawn().unwrap();
         }
 
-        // Re-schedule the timer interrupt in 2ms
-        poll_button::spawn_after(2.millis()).unwrap();
+        // Re-schedule the timer interrupt in 10ms
+        poll_button::spawn_after(10.millis()).unwrap();
     }
 
-    /// Called when button is pressed without bouncing for 12 (6 * 2) ms.
+    /// Called when button is pressed without bouncing for 20 (5 * 2) ms.
     #[task(priority = 2)]
     fn button_pressed(_c: button_pressed::Context) {
         update_backlight::spawn().unwrap();
@@ -393,7 +397,7 @@ mod app {
         };
     }
 
-    /// Polls the button state every 2ms
+    /// Polls the touch interrupt pin every 2ms
     // #[task(local = [touch], priority = 3)]
     #[task(local = [int_pin], priority = 3)]
     fn poll_touch(c: poll_touch::Context) {
@@ -493,7 +497,7 @@ mod app {
     /// Show the current time on the LCD.
     #[task(shared = [display], priority = 2)]
     fn show_time(mut c: show_time::Context, utc: NaiveDateTime) {
-        defmt::debug!("UTC time: {}:{}:{}", utc.hour(), utc.minute(), utc.second());
+        // defmt::debug!("UTC time: {}:{}:{}", utc.hour(), utc.minute(), utc.second());
     
         // Update UI
         c.shared.display.lock(|display| {
