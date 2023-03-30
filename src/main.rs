@@ -26,7 +26,7 @@ mod app {
     use debouncr::{debounce_6, Debouncer, Edge, Repeat6};
     use nrf52832_hal::{
         self as hal,
-        gpio::{Floating, Input, Level, Pin},
+        gpio::{Floating, Input, Level, Output, Pin, PullUp, PushPull},
         pac,
         prelude::InputPin,
         saadc::{Saadc, SaadcConfig, Resolution},
@@ -103,7 +103,9 @@ mod app {
         ble_r: Responder<BleConfig>,
         button: Pin<Input<Floating>>,
         button_debouncer: Debouncer<u8, Repeat6>,
+        // touch: CST816S<hal::Twim<pac::TWIM1>, Pin<Input<PullUp>>, Pin<Output<PushPull>>>,
         vibration: VibrationMotor,
+        int_pin: Pin<Input<PullUp>>,
     }
 
     #[monotonic(binds = TIMER1, default = true)]
@@ -139,11 +141,10 @@ mod app {
         // switch to the external HF oscillator. This is needed for Bluetooth to work.
         let _clocks = hal::clocks::Clocks::new(CLOCK).enable_ext_hfosc();
 
-        // Initialize Delays on TIMER0 and TIMER
-        // let mut delay = TimerDelay::new(TIMER0);
+        // Initialize Delay
         let mut delay = Delay::new(HFXO_FREQ_HZ);
 
-        // Initialize monotonic timer on TIMER0 (for RTIC)
+        // Initialize monotonic timer on TIMER1 (for RTIC)
         let mono = MonoTimer::new(TIMER1);
 
         // Initialize BLE timer on TIMER2
@@ -264,17 +265,20 @@ mod app {
         }
 
         // Initialize touch controller
-        let mut touchpad = CST816S::new(
-            i2c,
-            // setup touchpad external interrupt pin: P0.28/AIN4 (TP_INT)
-            gpio.p0_28.into_pullup_input().degrade(),
-            // setup touchpad reset pin: P0.10/NFC2 (TP_RESET)
-            gpio.p0_10.into_push_pull_output(Level::High).degrade(),
-        );
-        touchpad.setup(&mut delay).unwrap();
+        let int_pin = gpio.p0_28.into_pullup_input().degrade();
+
+        // let mut touch = CST816S::new(
+        //     i2c,
+        //     // setup touchpad external interrupt pin: P0.28/AIN4 (TP_INT)
+        //     int_pin,
+        //     // setup touchpad reset pin: P0.10/NFC2 (TP_RESET)
+        //     gpio.p0_10.into_push_pull_output(Level::High).degrade(),
+        // );
+        // touch.setup(&mut delay).unwrap();
 
         // Schedule tasks immediately
         poll_button::spawn().unwrap();
+        poll_touch::spawn().unwrap();
         update_battery_status::spawn().unwrap();
         notify::spawn().unwrap();
 
@@ -295,7 +299,9 @@ mod app {
                 ble_r,
                 button,
                 button_debouncer: debounce_6(false),
+                // touch,
                 vibration,
+                int_pin,
             },
             init::Monotonics(mono),
         )
@@ -384,6 +390,40 @@ mod app {
                 bl.off();
                 enable_ui::spawn(false).unwrap();
             },
+        };
+    }
+
+    /// Polls the button state every 2ms
+    // #[task(local = [touch], priority = 3)]
+    #[task(local = [int_pin], priority = 3)]
+    fn poll_touch(c: poll_touch::Context) {
+        if c.local.int_pin.is_low().unwrap() {
+            defmt::info!("Touch data available");
+        }
+
+        // if let Some(event) = c.local.touch.read_one_touch_event(true) {
+        //     // if let Some(event) = c.local.touch.read_one_touch_event(true) {
+        //         defmt::info!("Touch event detected");
+        //     //     touch_event_detected::spawn(event).unwrap();
+        //     // }
+        // } else {
+        //     // defmt::info!("No touch event detected");
+        // }
+
+        // Re-schedule the timer interrupt in 2ms
+        poll_touch::spawn_after(2.millis()).unwrap();
+    }
+
+    /// Called when a touch event is detected.
+    #[task(priority = 2)]
+    fn touch_event_detected(_c: touch_event_detected::Context, event: TouchEvent) {
+        match event.gesture {
+            TouchGesture::SingleClick => {
+                defmt::info!("Touch event detected: single click");
+            },
+            _ => {
+                defmt::info!("Touch event detected: other touch event");
+            }
         };
     }
 
