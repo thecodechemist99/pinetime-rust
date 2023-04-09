@@ -31,32 +31,14 @@ mod app {
         saadc::{Saadc, SaadcConfig, Resolution},
     };
     use rtic::Monotonic;
-    use rubble::{
-        att::NoAttributes,
-        config::Config,        
-        l2cap::{BleChannelMap, L2CAPState},
-        link::{
-            ad_structure::AdStructure,
-            queue::{PacketQueue, SimpleQueue},
-            {LinkLayer, Responder, MIN_PDU_BUF},
-        },
-        security::NoSecurity,
-        time::{Duration as RubbleDuration, Timer},
+    use rubble::link::{
+        MIN_PDU_BUF,
+        queue::SimpleQueue,
     };
     use rubble_nrf5x::{
-        radio::{BleRadio, PacketBuffer},
+        radio::PacketBuffer,
         timer::BleTimer,
-        utils::get_device_address,
     };
-
-    pub struct BleConfig {}
-
-    impl Config for BleConfig {
-        type Timer = BleTimer<pac::TIMER1>;
-        type Transmitter = BleRadio;
-        type ChannelMapper = BleChannelMap<NoAttributes, NoSecurity>;
-        type PacketQueue = &'static mut SimpleQueue;
-    }
 
     // Crate
     use crate::peripherals::{
@@ -67,13 +49,14 @@ mod app {
         vibration::VibrationMotor,
     };
     use crate::system::{
+        bluetooth::Bluetooth,
         delay::Delay,
         i2c::I2CPeripheral,
         monotonics::MonoTimer,
     };
 
     // Others
-    use chrono::{NaiveDateTime};
+    use chrono::NaiveDateTime;
     use fugit::{ExtU32, TimerInstantU32 as InstantU32};
 
     // Include current UTC epoch at compile time
@@ -88,20 +71,16 @@ mod app {
 
     #[shared]
     struct Shared {
-        #[lock_free]
-        ble_ll: LinkLayer<BleConfig>,
+        bluetooth: Bluetooth,
         display: Display,
         #[lock_free]
         draw_ui: bool,
-        #[lock_free]
-        radio: BleRadio,
     }
 
     #[local]
     struct Local {
         backlight: Backlight,
         battery: BatteryStatus,
-        ble_r: Responder<BleConfig>,
         button: Pin<Input<Floating>>,
         button_debouncer: Debouncer<u8, Repeat2>,
         touch: TouchController<hal::Twim<pac::TWIM1>, Pin<Input<PullUp>>, Pin<Output<PushPull>>>,
@@ -183,28 +162,15 @@ mod app {
             &mut delay,
         );
 
-                // Get bluetooth device address
-        let device_address = get_device_address();
-        defmt::info!("Bluetooth device address: {:?}", defmt::Debug2Format(&device_address));
-
-        // Initialize radio
-        let mut radio = BleRadio::new(
+        // Initialize Bluetooth
+        let bluetooth = Bluetooth::init(
+            ble_timer,
             RADIO,
             &FICR,
             c.local.ble_tx_buf,
             c.local.ble_rx_buf,
-        );
-        
-        // Create bluetooth TX/RX queues
-        let (tx, tx_cons) = c.local.tx_queue.split();
-        let (rx_prod, rx) = c.local.rx_queue.split();
-        
-        // Create the actual BLE stack objects
-        let mut ble_ll: LinkLayer<BleConfig> = LinkLayer::new(device_address, ble_timer);
-        let ble_r: Responder<BleConfig> = Responder::new(
-            tx,
-            rx,
-            L2CAPState::new(BleChannelMap::with_attributes(NoAttributes)),
+            c.local.tx_queue,
+            c.local.rx_queue,
         );
 
         // Initialize I2C
@@ -259,21 +225,6 @@ mod app {
             .unwrap()
             .init(&mut delay);
 
-        // Send BLE advertisement and set up regular interrupt
-        let next_update = ble_ll
-            .start_advertise(
-                // Values below 295ms seem not to work, for those
-                // the timer interrupt is only triggered once
-                RubbleDuration::millis(200),
-                &[AdStructure::CompleteLocalName("Rusty PineTime")],
-                &mut radio,
-                tx_cons,
-                rx_prod,
-            )
-            .unwrap();
-
-        ble_ll.timer().configure_interrupt(next_update);
-
         // Schedule tasks immediately
         poll_button::spawn().unwrap();
         poll_touch::spawn().unwrap();
@@ -286,15 +237,16 @@ mod app {
 
         (
             Shared {
-                ble_ll,
+                bluetooth,
+                // ble_ll,
                 display,
                 draw_ui: true,
-                radio,
+                // radio,
             },
             Local {
                 backlight,
                 battery,
-                ble_r,
+                // ble_r,
                 button,
                 button_debouncer: debounce_2(false),
                 touch,
@@ -305,39 +257,31 @@ mod app {
     }
 
     /// Hook up the RADIO interrupt to the Rubble BLE stack.
-    #[task(binds = RADIO, shared = [radio, ble_ll], priority = 4)]
-    fn radio(c: radio::Context) {
-        // defmt::info!("BLE radio interrupt");
-        let ble_ll = c.shared.ble_ll;
-        if let Some(cmd) = 
-            c.shared.radio.recv_interrupt(ble_ll.timer().now(), ble_ll)
-        {
-            c.shared.radio.configure_receiver(cmd.radio);
-            ble_ll.timer().configure_interrupt(cmd.next_update);
-            
-            if cmd.queued_work {
-                // If there's any lower-priority work to be done, ensure that happens.
-                // If we fail to spawn the task, it's already scheduled.
-                ble_worker::spawn().ok();
-            }
+    #[task(binds = RADIO, shared = [bluetooth], priority = 4)]
+    fn radio(mut c: radio::Context) {
+        let mut queued_work = false;
+
+        c.shared.bluetooth.lock(|ble| {
+            queued_work = ble.handle_radio_interrupt();
+        });
+
+        if queued_work {
+            // If there's any lower-priority work to be done, ensure that happens.
+            // If we fail to spawn the task, it's already scheduled.
+            ble_worker::spawn().ok();
         }
     }
 
     /// Hook up the TIMER1 interrupt to the Rubble BLE stack.
-    #[task(binds = TIMER1, shared = [radio, ble_ll], priority = 4)]
-    fn ble_timer(c: ble_timer::Context) {
-        defmt::info!("BLE timer interrupt");
-        let timer = c.shared.ble_ll.timer();
-        if !timer.is_interrupt_pending() {
-            return;
-        }
-        timer.clear_interrupt();
+    #[task(binds = TIMER1, shared = [bluetooth], priority = 4)]
+    fn ble_timer(mut c: ble_timer::Context) {
+        let mut queued_work = false;
 
-        let cmd = c.shared.ble_ll.update_timer(c.shared.radio);
-        c.shared.radio.configure_receiver(cmd.radio);
-        c.shared.ble_ll.timer().configure_interrupt(cmd.next_update);
+        c.shared.bluetooth.lock(|ble| {
+            queued_work = ble.handle_timer_interrupt();
+        });
 
-        if cmd.queued_work {
+        if queued_work {
             // If there's any lower-priority work to be done, ensure that happens.
             // If we fail to spawn the task, it's already scheduled.
             ble_worker::spawn().ok();
@@ -345,12 +289,12 @@ mod app {
     }
 
     /// Lower-priority task spawned from RADIO and TIMER1 interrupts.
-    #[task(local = [ble_r], priority = 2)]
-    fn ble_worker(c: ble_worker::Context) {
+    #[task(shared = [bluetooth], priority = 2)]
+    fn ble_worker(mut c: ble_worker::Context) {
         // Fully drain the packet queue
-        while c.local.ble_r.has_work() {
-            c.local.ble_r.process_one().unwrap();
-        }
+        c.shared.bluetooth.lock(|ble| {
+            ble.drain_packets();
+        });
     }
 
     /// Polls the button state every 10ms
