@@ -1,8 +1,8 @@
-//! Display control
+//! Display control module for PineTime
 
 use nrf52832_hal::{
     gpio::{Output, Pin, PushPull},
-    pac::SPIM1,
+    pac::SPIM0,
     spim::Spim,
 };
 
@@ -39,14 +39,14 @@ const BACKGROUND_COLOR: Rgb565 = Rgb565::new(0, 0, 0);
 
 #[allow(unused)]
 pub struct Display {
-    lcd: mipidsi::Display<SPIInterface<Spim<SPIM1>, Pin<Output<PushPull>>, Pin<Output<PushPull>>>, ST7789, Pin<Output<PushPull>>>,
+    lcd: mipidsi::Display<SPIInterface<Spim<SPIM0>, Pin<Output<PushPull>>, Pin<Output<PushPull>>>, ST7789, Pin<Output<PushPull>>>,
 }
 
 impl Display {
-    /// Initialize the backlight with the specified level (0–7).
+    /// Initialize the display
     #[allow(unused)]
     pub fn init(
-        spim: Spim<SPIM1>,
+        spim: Spim<SPIM0>,
         cs: Pin<Output<PushPull>>,
         dc: Pin<Output<PushPull>>,
         rst: Pin<Output<PushPull>>,

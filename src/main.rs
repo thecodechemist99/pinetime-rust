@@ -22,10 +22,9 @@ mod app {
     }
 
     // Device
-    use cst816s::{TouchEvent, TouchGesture, CST816S};
     use debouncr::{debounce_2, Debouncer, Edge, Repeat2};
-    use nrf52832_hal::{
-        self as hal,
+    use nrf52832_hal as hal;
+    use hal::{
         gpio::{Floating, Input, Level, Output, Pin, PullUp, PushPull},
         pac,
         prelude::InputPin,
@@ -33,11 +32,11 @@ mod app {
     };
     use rtic::Monotonic;
     use rubble::{
-        config::Config,
-        gatt::BatteryServiceAttrs,
+        att::NoAttributes,
+        config::Config,        
         l2cap::{BleChannelMap, L2CAPState},
         link::{
-            ad_structure::{AdStructure, Flags},
+            ad_structure::AdStructure,
             queue::{PacketQueue, SimpleQueue},
             {LinkLayer, Responder, MIN_PDU_BUF},
         },
@@ -53,9 +52,9 @@ mod app {
     pub struct BleConfig {}
 
     impl Config for BleConfig {
-        type Timer = BleTimer<pac::TIMER2>;
+        type Timer = BleTimer<pac::TIMER1>;
         type Transmitter = BleRadio;
-        type ChannelMapper = BleChannelMap<BatteryServiceAttrs, NoSecurity>;
+        type ChannelMapper = BleChannelMap<NoAttributes, NoSecurity>;
         type PacketQueue = &'static mut SimpleQueue;
     }
 
@@ -64,15 +63,17 @@ mod app {
         backlight::Backlight,
         battery::BatteryStatus,
         display::Display,
+        touch::{TouchController, TouchGesture},
         vibration::VibrationMotor,
     };
     use crate::system::{
         delay::Delay,
+        i2c::I2CPeripheral,
         monotonics::MonoTimer,
     };
 
     // Others
-    use chrono::{NaiveDateTime, Timelike};
+    use chrono::{NaiveDateTime};
     use fugit::{ExtU32, TimerInstantU32 as InstantU32};
 
     // Include current UTC epoch at compile time
@@ -103,13 +104,12 @@ mod app {
         ble_r: Responder<BleConfig>,
         button: Pin<Input<Floating>>,
         button_debouncer: Debouncer<u8, Repeat2>,
-        // touch: CST816S<hal::Twim<pac::TWIM1>, Pin<Input<PullUp>>, Pin<Output<PushPull>>>,
+        touch: TouchController<hal::Twim<pac::TWIM1>, Pin<Input<PullUp>>, Pin<Output<PushPull>>>,
         vibration: VibrationMotor,
-        int_pin: Pin<Input<PullUp>>,
     }
 
-    #[monotonic(binds = TIMER1, default = true)]
-    type Mono = MonoTimer<hal::pac::TIMER1>;
+    #[monotonic(binds = TIMER0, default = true)]
+    type Mono = MonoTimer<hal::pac::TIMER0>;
 
     #[init(
         local = [
@@ -128,10 +128,9 @@ mod app {
             P0,
             RADIO,
             SAADC,
-            SPIM1,
-            // TIMER0,
+            SPIM0,
+            TIMER0,
             TIMER1,
-            TIMER2,
             TWIM1,
             ..
         } = c.device;
@@ -144,11 +143,11 @@ mod app {
         // Initialize Delay
         let mut delay = Delay::new(HFXO_FREQ_HZ);
 
-        // Initialize monotonic timer on TIMER1 (for RTIC)
-        let mono = MonoTimer::new(TIMER1);
+        // Initialize monotonic timer on TIMER0 (for RTIC)
+        let mono = MonoTimer::new(TIMER0);
 
-        // Initialize BLE timer on TIMER2
-        let ble_timer = BleTimer::init(TIMER2);
+        // Initialize BLE timer on TIMER1
+        let ble_timer = BleTimer::init(TIMER1);
 
         // Initialize GPIO peripheral
         let gpio = hal::gpio::p0::Parts::new(P0);
@@ -205,7 +204,7 @@ mod app {
         let ble_r: Responder<BleConfig> = Responder::new(
             tx,
             rx,
-            L2CAPState::new(BleChannelMap::with_attributes(BatteryServiceAttrs::new())),
+            L2CAPState::new(BleChannelMap::with_attributes(NoAttributes)),
         );
 
         // Initialize I2C
@@ -228,7 +227,7 @@ mod app {
         };
 
         let spi = hal::Spim::new(
-            SPIM1,
+            SPIM0,
             spi_pins,
             // Use SPI at 8MHz (the fastest clock available on the nRF52832),
             // otherwise refreshing will be super slow.
@@ -252,16 +251,13 @@ mod app {
         }
 
         // Initialize touch controller
-        let int_pin = gpio.p0_28.into_pullup_input().degrade();
-
-        // let mut touch = CST816S::new(
-        //     i2c,
-        //     // setup touchpad external interrupt pin: P0.28/AIN4 (TP_INT)
-        //     int_pin,
-        //     // setup touchpad reset pin: P0.10/NFC2 (TP_RESET)
-        //     gpio.p0_10.into_push_pull_output(Level::High).degrade(),
-        // );
-        // touch.setup(&mut delay).unwrap();
+        let touch = TouchController::new(
+            i2c,
+            gpio.p0_28.into_pullup_input().degrade(), // Touchpad external interrupt pin: P0.28/AIN4 (TP_INT)
+            Some(gpio.p0_10.into_push_pull_output(Level::High).degrade()), // Touchpad reset pin: P0.10/NFC2 (TP_RESET)
+        )
+            .unwrap()
+            .init(&mut delay);
 
         // Send BLE advertisement and set up regular interrupt
         let next_update = ble_ll
@@ -270,7 +266,6 @@ mod app {
                 // the timer interrupt is only triggered once
                 RubbleDuration::millis(200),
                 &[AdStructure::CompleteLocalName("Rusty PineTime")],
-                // &[AdStructure::Flags(Flags::LE_GENERAL_DISCOVERABLE), AdStructure::Flags(Flags::BR_EDR_NOT_SUPPORTED), AdStructure::CompleteLocalName("Rusty PineTime") ],
                 &mut radio,
                 tx_cons,
                 rx_prod,
@@ -302,9 +297,8 @@ mod app {
                 ble_r,
                 button,
                 button_debouncer: debounce_2(false),
-                // touch,
+                touch,
                 vibration,
-                int_pin,
             },
             init::Monotonics(mono),
         )
@@ -329,8 +323,8 @@ mod app {
         }
     }
 
-    /// Hook up the TIMER2 interrupt to the Rubble BLE stack.
-    #[task(binds = TIMER2, shared = [radio, ble_ll], priority = 4)]
+    /// Hook up the TIMER1 interrupt to the Rubble BLE stack.
+    #[task(binds = TIMER1, shared = [radio, ble_ll], priority = 4)]
     fn ble_timer(c: ble_timer::Context) {
         defmt::info!("BLE timer interrupt");
         let timer = c.shared.ble_ll.timer();
@@ -350,7 +344,7 @@ mod app {
         }
     }
 
-    /// Lower-priority task spawned from RADIO and TIMER2 interrupts.
+    /// Lower-priority task spawned from RADIO and TIMER1 interrupts.
     #[task(local = [ble_r], priority = 2)]
     fn ble_worker(c: ble_worker::Context) {
         // Fully drain the packet queue
@@ -398,21 +392,11 @@ mod app {
     }
 
     /// Polls the touch interrupt pin every 2ms
-    // #[task(local = [touch], priority = 3)]
-    #[task(local = [int_pin], priority = 3)]
+    #[task(local = [touch], priority = 3)]
     fn poll_touch(c: poll_touch::Context) {
-        if c.local.int_pin.is_low().unwrap() {
-            defmt::info!("Touch data available");
+        if let Some(gesture) = c.local.touch.try_event_detected() {
+            touch_event_detected::spawn(gesture).unwrap();
         }
-
-        // if let Some(event) = c.local.touch.read_one_touch_event(true) {
-        //     // if let Some(event) = c.local.touch.read_one_touch_event(true) {
-        //         defmt::info!("Touch event detected");
-        //     //     touch_event_detected::spawn(event).unwrap();
-        //     // }
-        // } else {
-        //     // defmt::info!("No touch event detected");
-        // }
 
         // Re-schedule the timer interrupt in 2ms
         poll_touch::spawn_after(2.millis()).unwrap();
@@ -420,8 +404,8 @@ mod app {
 
     /// Called when a touch event is detected.
     #[task(priority = 2)]
-    fn touch_event_detected(_c: touch_event_detected::Context, event: TouchEvent) {
-        match event.gesture {
+    fn touch_event_detected(_c: touch_event_detected::Context, gesture: TouchGesture) {
+        match gesture {
             TouchGesture::SingleClick => {
                 defmt::info!("Touch event detected: single click");
             },
