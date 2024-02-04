@@ -1,6 +1,5 @@
 #![no_std]
 #![no_main]
-#![feature(type_alias_impl_trait)]
 
 mod backlight;
 mod battery;
@@ -16,23 +15,19 @@ use embassy_nrf::{
     saadc::{self, ChannelConfig, Saadc},
     spim,
 };
-use embassy_sync::{
-    blocking_mutex::raw::ThreadModeRawMutex,
-    mutex::Mutex,
-    signal::Signal,
-};
+use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, mutex::Mutex, signal::Signal};
 use embassy_time::{Duration, Timer};
 
-use panic_probe as _;
 use defmt_rtt as _;
+use panic_probe as _;
 
 bind_interrupts!(struct Irqs {
     SAADC => saadc::InterruptHandler;
     SPIM2_SPIS2_SPI2 => spim::InterruptHandler<SPI2>;
 });
 
-use battery::BatteryStatus;
 use backlight::Backlight;
+use battery::BatteryStatus;
 use display::Display;
 
 struct UserInterface {
@@ -45,7 +40,11 @@ struct UserInterface {
 include!(concat!(env!("OUT_DIR"), "/utc.rs"));
 
 static INCREASE_BRIGHTNESS: Signal<ThreadModeRawMutex, bool> = Signal::new();
-static UI: Mutex<ThreadModeRawMutex, UserInterface> = Mutex::new(UserInterface { time: UTC_TIME, battery: 0, charging: false });
+static UI: Mutex<ThreadModeRawMutex, UserInterface> = Mutex::new(UserInterface {
+    time: UTC_TIME,
+    battery: 0,
+    charging: false,
+});
 
 #[embassy_executor::task(pool_size = 1)]
 async fn update_lcd(mut display: Display) {
@@ -85,7 +84,9 @@ async fn poll_button(pin: Input<'static, AnyPin>) {
         // Poll button
         if pin.is_high() {
             defmt::info!("Button pressed!");
-            unwrap!(Spawner::for_current_executor().await.spawn(button_pressed()));
+            unwrap!(Spawner::for_current_executor()
+                .await
+                .spawn(button_pressed()));
         }
 
         // pin.wait_for_rising_edge().await;
