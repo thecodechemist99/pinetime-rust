@@ -27,8 +27,8 @@ embedded-io = "0.6"
 
 # Bluetooth
 # nrf-softdevice = "0.0.0"
-rubble = "0.0.4"
-rubble-nrf5x = { version = "0.0.4", features = ["52832"] }
+rubble = { git = "https://github.com/thecodechemist99/rubble", dir = "tree/master/rubble"}
+rubble-nrf5x = { git = "https://github.com/thecodechemist99/rubble", dir = "tree/master/rubble-nrf5x", features = ["52832"] }
 
 # Graphics
 chrono = { version = "0.4.24", default-features = false }
@@ -38,6 +38,17 @@ format_no_std = "1.0.0"
 mipidsi = "0.7"
 
 # Debug probe
-defmt = "0.3.0"
-defmt-rtt = "0.4.0"
-panic-probe = { version = "0.3.0", features = ["print-defmt"] }
+defmt = "0.3"
+defmt-rtt = "0.4"
+panic-probe = { version = "0.3", features = ["print-defmt"] }
+
+[profile.dev]
+opt-level = "z"
+strip = false
+
+[profile.release]
+opt-level = "z"
+codegen-units = 1
+lto = true
+strip = true
+panic = 'abort'
