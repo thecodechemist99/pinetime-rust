@@ -15,7 +15,7 @@ use embedded_graphics::{
     primitives::{Ellipse, PrimitiveStyle, PrimitiveStyleBuilder},
     text::Text,
 };
-use embedded_hal::blocking::delay::DelayUs;
+use embedded_hal::delay::DelayNs;
 use mipidsi::{models::ST7789, Builder, Orientation};
 use profont::PROFONT_24_POINT;
 
@@ -43,7 +43,7 @@ impl Display {
         cs: Pin<Output<PushPull>>,
         dc: Pin<Output<PushPull>>,
         rst: Pin<Output<PushPull>>,
-        delay: &mut impl DelayUs<u32>,
+        delay: &mut impl DelayNs,
     ) -> Self {
         let lcd = Builder::st7789(SPIInterface::new(spim, dc, cs))
             .with_display_size(LCD_W, LCD_H)

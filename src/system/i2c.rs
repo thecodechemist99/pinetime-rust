@@ -1,12 +1,12 @@
 //! Generic I2C peripheral trait
 
-use embedded_hal::blocking::i2c::{Write, Read, WriteRead};
+use embedded_hal::i2c::I2c;
 use nrf52832_hal::prelude::{InputPin, StatefulOutputPin};
 
 /// Generic I2C peripheral with interrupt pin
 pub trait I2CPeripheral<I2C, PINT, RST>
 where
-    I2C: Write + Read + WriteRead,
+    I2C: I2c,
     PINT: InputPin,
     RST: StatefulOutputPin,
     Self: Sized,

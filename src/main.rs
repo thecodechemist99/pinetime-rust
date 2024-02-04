@@ -27,6 +27,7 @@ mod app {
         saadc::{Resolution, Saadc, SaadcConfig},
     };
     use nrf52832_hal as hal;
+    use peripherals::touch::TouchController;
     use rtic::Monotonic;
     use rubble::link::{queue::SimpleQueue, MIN_PDU_BUF};
     use rubble_nrf5x::{radio::PacketBuffer, timer::BleTimer};
