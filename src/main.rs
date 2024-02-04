@@ -1,142 +1,161 @@
 #![no_std]
 #![no_main]
 
-mod backlight;
-mod battery;
-// mod bluetooth;
-mod display;
+mod peripherals;
+mod system;
 
+// Panic handler and debugging
 use defmt::unwrap;
-use embassy_executor::Spawner;
-use embassy_nrf::{
-    bind_interrupts,
-    gpio::{AnyPin, Input, Level, Output, OutputDrive, Pin as _, Pull},
-    peripherals::SPI2,
-    saadc::{self, ChannelConfig, Saadc},
-    spim,
-};
-use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, mutex::Mutex, signal::Signal};
-use embassy_time::{Duration, Timer};
 
 use defmt_rtt as _;
 use panic_probe as _;
 
+// Device
+use debouncr::{debounce_2, Edge};
+use embassy_executor::Spawner;
+use embassy_nrf::{
+    bind_interrupts,
+    gpio::{Input, Level, Output, OutputDrive, Pull},
+    peripherals::{P0_10, P0_13, P0_28, SPI2, TWISPI1},
+    saadc::{self, ChannelConfig, Resolution, Saadc},
+    spim,
+    twim::{self, Twim},
+};
+use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, signal::Signal};
+use embassy_time::{Delay, Duration, Instant, Ticker, Timer};
+
 bind_interrupts!(struct Irqs {
     SAADC => saadc::InterruptHandler;
+    SPIM1_SPIS1_TWIM1_TWIS1_SPI1_TWI1 => twim::InterruptHandler<TWISPI1>;
     SPIM2_SPIS2_SPI2 => spim::InterruptHandler<SPI2>;
 });
 
-use backlight::Backlight;
-use battery::BatteryStatus;
-use display::Display;
+// Crate
+use peripherals::{
+    backlight::Backlight,
+    battery::{BatteryInfo, BatteryStatus},
+    display::Display,
+    touch::{TouchController, TouchGesture},
+    vibration::VibrationMotor,
+};
+use system::{bluetooth::Bluetooth, i2c::I2CPeripheral};
 
-struct UserInterface {
-    time: i64,
-    battery: u8,
-    charging: bool,
-}
+// Others
+use chrono::NaiveDateTime;
+// use fugit::{ExtU32, TimerInstantU32 as InstantU32};
 
-// Include current local time timestamp at compile time
+// Include current UTC epoch at compile time
 include!(concat!(env!("OUT_DIR"), "/utc.rs"));
+const TIMEZONE: i32 = 2 * 3_600;
 
+// PineTime has a 32 MHz HSE (HFXO) and a 32.768 kHz LSE (LFXO)
+#[allow(dead_code)]
+const HFXO_FREQ_HZ: u32 = 32_000_000u32;
+#[allow(dead_code)]
+const LFXO_FREQ_HZ: u32 = 32_768u32;
+
+// Communication channels
+static BATTERY_STATUS: Signal<ThreadModeRawMutex, BatteryInfo> = Signal::new();
 static INCREASE_BRIGHTNESS: Signal<ThreadModeRawMutex, bool> = Signal::new();
-static UI: Mutex<ThreadModeRawMutex, UserInterface> = Mutex::new(UserInterface {
-    time: UTC_TIME,
-    battery: 0,
-    charging: false,
-});
+static NOTIFY: Signal<ThreadModeRawMutex, u8> = Signal::new();
+static TIME: Signal<ThreadModeRawMutex, NaiveDateTime> = Signal::new();
+static TOUCH_EVENT: Signal<ThreadModeRawMutex, TouchGesture> = Signal::new();
 
-#[embassy_executor::task(pool_size = 1)]
-async fn update_lcd(mut display: Display) {
-    loop {
-        {
-            let ui = UI.lock().await;
-            display.update(ui.time, ui.battery, ui.charging);
-        }
-
-        // Initialize touch controller
-        let touch = TouchController::new(
-            i2c,
-            gpio.p0_28.into_pullup_input().degrade(), // Touchpad external interrupt pin: P0.28/AIN4 (TP_INT)
-            Some(gpio.p0_10.into_push_pull_output(Level::High).degrade()), // Touchpad reset pin: P0.10/NFC2 (TP_RESET)
-        )
-        .unwrap()
-        .init(&mut delay);
-
-        // Schedule tasks immediately
-        poll_button::spawn().unwrap();
-        poll_touch::spawn().unwrap();
-        update_battery_status::spawn().unwrap();
-        notify::spawn().unwrap();
-
-        // Schedule time measurement task to start exactly 1s after boot
-        let since_boot = InstantU32::duration_since_epoch(monotonics::now());
-        update_time::spawn_at(monotonics::now() + (1.secs() - since_boot)).unwrap();
-
-        (
-            Shared {
-                bluetooth,
-                // ble_ll,
-                display,
-                draw_ui: true,
-                // radio,
-            },
-            Local {
-                backlight,
-                battery,
-                // ble_r,
-                button,
-                button_debouncer: debounce_2(false),
-                touch,
-                vibration,
-            },
-            init::Monotonics(mono),
-        )
-    }
-
-    /// Hook up the RADIO interrupt to the Rubble BLE stack.
-    #[task(binds = RADIO, shared = [bluetooth], priority = 4)]
-    fn radio(mut c: radio::Context) {
-        let mut queued_work = false;
-
-        c.shared.bluetooth.lock(|ble| {
-            queued_work = ble.handle_radio_interrupt();
-        });
-
-        if queued_work {
-            // If there's any lower-priority work to be done, ensure that happens.
-            // If we fail to spawn the task, it's already scheduled.
-            ble_worker::spawn().ok();
-        }
-    }
-
-    /// Hook up the TIMER1 interrupt to the Rubble BLE stack.
-    #[task(binds = TIMER1, shared = [bluetooth], priority = 4)]
-    fn ble_timer(mut c: ble_timer::Context) {
-        let mut queued_work = false;
-
-        c.shared.bluetooth.lock(|ble| {
-            queued_work = ble.handle_timer_interrupt();
-        });
-
-        if queued_work {
-            // If there's any lower-priority work to be done, ensure that happens.
-            // If we fail to spawn the task, it's already scheduled.
-            ble_worker::spawn().ok();
-        }
-    }
-}
-
+/// Called when button is pressed without bouncing for 10 (5 * 2) ms.
 #[embassy_executor::task(pool_size = 1)]
 async fn button_pressed() {
     INCREASE_BRIGHTNESS.signal(true);
 }
 
+/// Check for notifications every 100ms
 #[embassy_executor::task(pool_size = 1)]
-async fn poll_button(pin: Input<'static, AnyPin>) {
+async fn notify(mut motor: VibrationMotor<'static>) {
+    loop {
+        if NOTIFY.signaled() {
+            // Vibrate signaled amount of times
+            let count = NOTIFY.wait().await;
+            match count {
+                1 => motor.pulse_once(Some(200)),
+                _ => motor.pulse_times(Some(200), count),
+            }
+        }
+
+        // Re-schedule the timer interrupt in 100ms
+        Timer::after(Duration::from_millis(100)).await;
+    }
+}
+
+/// Fetch the battery status from the hardware.
+#[embassy_executor::task(pool_size = 1)]
+async fn update_battery_status(mut battery: BatteryStatus<'static>) {
+    loop {
+        if battery.update().unwrap() {
+            // Battery status changed
+            defmt::info!("Battery status updated");
+            BATTERY_STATUS.signal(battery.info());
+        };
+
+        // Re-schedule the timer interrupt in 1s
+        Timer::after(Duration::from_secs(1)).await;
+    }
+}
+
+/// Update backlight brightness
+#[embassy_executor::task(pool_size = 1)]
+async fn update_brightness(mut backlight: Backlight<'static>) {
+    loop {
+        if INCREASE_BRIGHTNESS.wait().await {
+            if backlight.get_brightness() < 7 {
+                backlight.brighter().unwrap();
+            } else {
+                backlight.off();
+            }
+        }
+    }
+}
+
+#[embassy_executor::task(pool_size = 1)]
+async fn update_lcd(mut display: Display<'static, SPI2>) {
+    loop {
+        if BATTERY_STATUS.signaled() {
+            display.update_battery_status(BATTERY_STATUS.wait().await);
+        }
+
+        if TIME.signaled() {
+            display.update_time(TIME.wait().await, TIMEZONE);
+        }
+
+        // Re-schedule the timer interrupt in 1s
+        Timer::after(Duration::from_secs(1)).await;
+    }
+}
+
+/// Get the current time.
+#[embassy_executor::task(pool_size = 1)]
+async fn update_time() {
+    let mut tick = Ticker::every(Duration::from_secs(1));
+    loop {
+        // Calculate current time
+        let now = Instant::now();
+        let utc = NaiveDateTime::from_timestamp_opt(UTC_EPOCH + now.elapsed().as_secs() as i64, 0)
+            .unwrap();
+
+        // Send time to channel
+        TIME.signal(utc);
+
+        // Re-schedule the timer interrupt
+        tick.next().await;
+    }
+}
+
+/// Polls the button state every 10ms
+#[embassy_executor::task(pool_size = 1)]
+async fn poll_button(pin: Input<'static, P0_13>) {
+    let mut debounce = debounce_2(false);
     loop {
         // Poll button
-        if pin.is_high() {
+        let edge = debounce.update(pin.is_high());
+        if edge == Some(Edge::Rising) {
             defmt::info!("Button pressed!");
             unwrap!(Spawner::for_current_executor()
                 .await
@@ -148,103 +167,106 @@ async fn poll_button(pin: Input<'static, AnyPin>) {
         // pin.wait_for_falling_edge().await;
         // defmt::info!("Button released!");
 
+        // Re-schedule the timer interrupt in 10ms
+        Timer::after(Duration::from_millis(10)).await;
+    }
+}
+
+/// Polls the touch interrupt pin every 2ms
+#[embassy_executor::task(pool_size = 1)]
+async fn poll_touch(mut touch: TouchController<'static, TWISPI1, P0_28, P0_10>) {
+    loop {
+        // Check for touch event
+        if let Some(gesture) = touch.try_event_detected() {
+            TOUCH_EVENT.signal(gesture);
+        }
+
         // Re-schedule the timer interrupt in 2ms
-        poll_touch::spawn_after(2.millis()).unwrap();
+        Timer::after(Duration::from_millis(2)).await;
     }
+}
 
-    /// Called when a touch event is detected.
-    #[task(priority = 2)]
-    fn touch_event_detected(_c: touch_event_detected::Context, gesture: TouchGesture) {
-        match gesture {
-            TouchGesture::SingleClick => {
-                defmt::info!("Touch event detected: single click");
-            }
-            TouchGesture::DoubleClick => {
-                defmt::info!("Touch event detected: double click");
-                // update_backlight::spawn().unwrap();
-            }
-            _ => {
-                defmt::info!("Touch event detected: other touch event");
-            }
-        };
-    }
+#[embassy_executor::main]
+async fn main(_spawner: Spawner) {
+    let mut p = embassy_nrf::init(Default::default());
+    defmt::info!("Initializing");
 
-    /// Enable or disable UI.
-    #[task(shared = [display, draw_ui], priority = 3)]
-    fn enable_ui(mut c: enable_ui::Context, enable: bool) {
-        if enable {
-            *c.shared.draw_ui = true;
-        } else {
-            *c.shared.draw_ui = false;
-            c.shared.display.lock(|d| {
-                d.clear();
-            });
-        }
-    }
+    // Initialize SAADC
+    let mut saadc_config = saadc::Config::default();
+    // Set resolution to 12bit, necessary for correct battery status calculation
+    saadc_config.resolution = Resolution::_12BIT;
+    // Pin P0.31: Voltage level
+    let channel_config = ChannelConfig::single_ended(&mut p.P0_31);
+    let saadc = Saadc::new(p.SAADC, Irqs, saadc_config, [channel_config]);
+    saadc.calibrate().await;
 
-    /// Fetch the battery status from the hardware. Update the text if
-    /// ui is enabled and something changed.
-    #[task(local = [battery], shared = [draw_ui], priority = 3)]
-    fn update_battery_status(c: update_battery_status::Context) {
-        let changed = c.local.battery.update().unwrap();
-        if changed && *c.shared.draw_ui {
-            show_battery_status::spawn(c.local.battery.percent(), c.local.battery.is_charging())
-                .unwrap();
-        }
+    // Initialize Backlight
+    let mut backlight = Backlight::init(
+        Output::new(p.P0_14, Level::High, OutputDrive::Standard),
+        Output::new(p.P0_22, Level::High, OutputDrive::Standard),
+        Output::new(p.P0_23, Level::High, OutputDrive::Standard),
+        0,
+    );
 
-        // Re-schedule the timer interrupt in 1s
-        update_battery_status::spawn_after(1.secs()).unwrap();
-    }
+    // Initalize Battery
+    let battery = BatteryStatus::init(Input::new(p.P0_12, Pull::None), saadc)
+        .await
+        .unwrap();
+    BATTERY_STATUS.signal(battery.info());
 
-    /// Show the battery status on the LCD.
-    #[task(shared = [display], priority = 2)]
-    fn show_battery_status(mut c: show_battery_status::Context, percentage: u8, charging: bool) {
-        defmt::info!(
-            "Battery status: {} ({})",
-            percentage,
-            if charging { "charging" } else { "discharging" },
-        );
+    // Initialize Button
+    let _ = Output::new(p.P0_15, Level::High, OutputDrive::Standard);
+    let button = Input::new(p.P0_13, Pull::None);
 
-        // Update UI
-        c.shared.display.lock(|d| {
-            d.update_battery_status(percentage, charging);
-        });
-    }
+    // Initialize vibration motor
+    let vibration = VibrationMotor::init(Output::new(p.P0_16, Level::High, OutputDrive::Standard));
 
-    /// Get the current time Instant. Update the text if
-    /// ui is enabled and something changed.
-    #[task(shared = [draw_ui], priority = 3)]
-    fn update_time(c: update_time::Context) {
-        let now = monotonics::now();
+    // Initialize Bluetooth
 
-        if *c.shared.draw_ui {
-            let utc = NaiveDateTime::from_timestamp_opt(
-                UTC_EPOCH + InstantU32::duration_since_epoch(now).to_secs() as i64,
-                0,
-            )
-            .unwrap();
-            show_time::spawn(utc).unwrap();
-        }
+    // Initialize I2C
+    let mut i2c_config = twim::Config::default();
+    // Use I2C at 400KHz (the fastest clock available on the nRF52832),
+    i2c_config.frequency = twim::Frequency::K400;
 
-        // Re-schedule the timer interrupt
-        update_time::spawn_at(now + 1.secs()).unwrap();
-    }
+    let i2c = Twim::new(p.TWISPI1, Irqs, p.P0_06, p.P0_07, i2c_config);
 
-    /// Show the current time on the LCD.
-    #[task(shared = [display], priority = 2)]
-    fn show_time(mut c: show_time::Context, utc: NaiveDateTime) {
-        // defmt::debug!("UTC time: {}:{}:{}", utc.hour(), utc.minute(), utc.second());
+    // Initialize SPI
+    let mut spim_config = spim::Config::default();
+    // Use SPI at 8MHz (the fastest clock available on the nRF52832),
+    // otherwise refreshing will be super slow.
+    spim_config.frequency = spim::Frequency::M8;
+    // SPI must be used in mode 3. Mode 0 (the default) won't work.
+    spim_config.mode = spim::MODE_3;
 
-        // Update UI
-        c.shared.display.lock(|display| {
-            display.update_time(utc, TIMEZONE);
-        });
-    }
+    let spim = spim::Spim::new(p.SPI2, Irqs, p.P0_02, p.P0_04, p.P0_03, spim_config);
+
+    // Initialize LCD
+    let display = Display::init(
+        spim,
+        Output::new(p.P0_25, Level::Low, OutputDrive::Standard),
+        Output::new(p.P0_18, Level::Low, OutputDrive::Standard),
+        Output::new(p.P0_26, Level::Low, OutputDrive::Standard),
+        &mut Delay,
+    );
+    backlight.set(2).unwrap();
+
+    // Initialize touch controller
+    let touch = TouchController::new(
+        i2c,
+        Input::new(p.P0_28, Pull::Up), // Touchpad external interrupt pin: P0.28/AIN4 (TP_INT)
+        Some(Output::new(p.P0_10, Level::High, OutputDrive::Standard)), // Touchpad reset pin: P0.10/NFC2 (TP_RESET)
+    )
+    .unwrap()
+    .init(&mut Delay);
 
     defmt::info!("Initialization finished");
 
+    // Schedule tasks
     unwrap!(_spawner.spawn(poll_button(button)));
+    unwrap!(_spawner.spawn(poll_touch(touch)));
     unwrap!(_spawner.spawn(update_battery_status(battery)));
     unwrap!(_spawner.spawn(update_brightness(backlight)));
     unwrap!(_spawner.spawn(update_lcd(display)));
+    unwrap!(_spawner.spawn(update_time()));
+    unwrap!(_spawner.spawn(notify(vibration)));
 }

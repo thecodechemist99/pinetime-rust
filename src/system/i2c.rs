@@ -1,17 +1,23 @@
 //! Generic I2C peripheral trait
 
-use embedded_hal::i2c::I2c;
-use nrf52832_hal::prelude::{InputPin, StatefulOutputPin};
+use embassy_nrf::{
+    gpio::{Input, Output, Pin},
+    twim::{self, Twim},
+};
 
 /// Generic I2C peripheral with interrupt pin
-pub trait I2CPeripheral<I2C, PINT, RST>
+pub trait I2CPeripheral<'a, I, IRQ, RST>
 where
-    I2C: I2c,
-    PINT: InputPin,
-    RST: StatefulOutputPin,
+    I: twim::Instance,
+    IRQ: Pin,
+    RST: Pin,
     Self: Sized,
 {
-    fn new(i2c: I2C, interrupt_pin: PINT, reset_pin: Option<RST>) -> Result<Self, Error>;
+    fn new(
+        i2c: Twim<'a, I>,
+        interrupt_pin: Input<'a, IRQ>,
+        reset_pin: Option<Output<'a, RST>>,
+    ) -> Result<Self, Error>;
 }
 
 #[derive(Debug)]

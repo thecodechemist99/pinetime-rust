@@ -1,14 +1,12 @@
-use nrf52832_hal::pac::{FICR, RADIO, TIMER1};
+use embassy_nrf::pac::{FICR, RADIO, TIMER1};
 use rubble::{
     att::NoAttributes,
-    config::Config,        
+    config::Config,
     l2cap::{BleChannelMap, L2CAPState},
     link::{
         ad_structure::AdStructure,
-        Cmd,
-        LinkLayer,
         queue::{PacketQueue, SimpleQueue},
-        Responder, DeviceAddress,
+        Cmd, DeviceAddress, LinkLayer, Responder,
     },
     security::NoSecurity,
     time::{Duration as RubbleDuration, Timer},
@@ -48,20 +46,18 @@ impl Bluetooth {
     ) -> Self {
         // Get bluetooth device address
         let device_address = get_device_address();
-        defmt::info!("Bluetooth device address: {:?}", defmt::Debug2Format(&device_address));
-        
-        // Initialize radio
-        let mut radio = BleRadio::new(
-            radio_peripheral,
-            ficr_peripheral,
-            ble_tx_buf,
-            ble_rx_buf,
+        defmt::info!(
+            "Bluetooth device address: {:?}",
+            defmt::Debug2Format(&device_address)
         );
-                
+
+        // Initialize radio
+        let mut radio = BleRadio::new(radio_peripheral, ficr_peripheral, ble_tx_buf, ble_rx_buf);
+
         // Create bluetooth TX/RX queues
         let (tx, tx_cons) = tx_queue.split();
         let (rx_prod, rx) = rx_queue.split();
-                
+
         // Create the actual BLE stack objects
         let mut ble_ll: LinkLayer<BleConfig> = LinkLayer::new(device_address, ble_timer);
         let ble_r: Responder<BleConfig> = Responder::new(
@@ -82,16 +78,22 @@ impl Bluetooth {
                 rx_prod,
             )
             .unwrap();
-    
+
         ble_ll.timer().configure_interrupt(next_update);
 
-        Self { ble_ll, ble_r, device_address, radio }
+        Self {
+            ble_ll,
+            ble_r,
+            device_address,
+            radio,
+        }
     }
 
     pub fn handle_radio_interrupt(&mut self) -> bool {
-        if let Some(cmd) = 
-            self.radio.recv_interrupt(self.ble_ll.timer().now(), &mut self.ble_ll)
-        {    
+        if let Some(cmd) = self
+            .radio
+            .recv_interrupt(self.ble_ll.timer().now(), &mut self.ble_ll)
+        {
             self.reset_interrupt(cmd)
         } else {
             false

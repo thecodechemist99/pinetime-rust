@@ -3,49 +3,31 @@
 pub use cst816s::TouchGesture;
 
 use crate::system::i2c::{Error, I2CPeripheral};
-use core::fmt::Debug;
 use cst816s::CST816S;
-use embedded_hal::{delay::DelayNs, i2c::I2c};
-use nrf52832_hal::prelude::{InputPin, StatefulOutputPin};
+use embassy_nrf::{
+    gpio::{Input, Output, Pin},
+    twim::{self, Twim},
+};
+use embassy_time::Delay;
 
 #[allow(unused)]
-pub struct TouchController<I2C, PINT, RST>
+pub struct TouchController<'a, I, IRQ, RST>
 where
-    I2C: I2c,
-    PINT: InputPin,
-    RST: StatefulOutputPin,
+    I: twim::Instance,
+    IRQ: Pin,
+    RST: Pin,
 {
-    touchpad: CST816S<I2C, PINT, RST>,
+    touchpad: CST816S<Twim<'a, I>, Input<'a, IRQ>, Output<'a, RST>>,
 }
 
-impl<I2C, PINT, RST> I2CPeripheral<I2C, PINT, RST> for TouchController<I2C, PINT, RST>
+impl<I, IRQ, RST> TouchController<'_, I, IRQ, RST>
 where
-    I2C: I2c,
-    PINT: InputPin,
-    RST: StatefulOutputPin,
+    I: twim::Instance,
+    IRQ: Pin,
+    RST: Pin,
 {
     #[allow(unused)]
-    fn new(i2c: I2C, interrupt_pin: PINT, reset_pin: Option<RST>) -> Result<Self, Error> {
-        match reset_pin {
-            Some(reset) => {
-                let mut touchpad = CST816S::new(i2c, interrupt_pin, reset);
-
-                Ok(Self { touchpad })
-            }
-            None => Err(Error::ResetPinRequired),
-        }
-    }
-}
-
-impl<I2C, PINT, RST> TouchController<I2C, PINT, RST>
-where
-    I2C: I2c,
-    PINT: InputPin,
-    RST: StatefulOutputPin,
-    RST::Error: Debug,
-{
-    #[allow(unused)]
-    pub fn init(mut self, delay: &mut impl DelayNs) -> Self {
+    pub fn init(mut self, delay: &mut Delay) -> Self {
         self.touchpad.setup(delay).unwrap();
         self
     }
@@ -56,6 +38,29 @@ where
             Some(event.gesture)
         } else {
             None
+        }
+    }
+}
+
+impl<'a, I, IRQ, RST> I2CPeripheral<'a, I, IRQ, RST> for TouchController<'a, I, IRQ, RST>
+where
+    I: twim::Instance,
+    IRQ: Pin,
+    RST: Pin,
+{
+    #[allow(unused)]
+    fn new(
+        i2c: Twim<'a, I>,
+        interrupt_pin: Input<'a, IRQ>, // P0.28 : Interrupt (signal to the CPU when a touch event is detected)
+        reset_pin: Option<Output<'a, RST>>,
+    ) -> Result<Self, Error> {
+        match reset_pin {
+            Some(reset) => {
+                let mut touchpad = CST816S::new(i2c, interrupt_pin, reset);
+
+                Ok(Self { touchpad })
+            }
+            None => Err(Error::ResetPinRequired),
         }
     }
 }

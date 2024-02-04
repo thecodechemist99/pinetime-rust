@@ -1,30 +1,25 @@
 //! Control the vibration motos
-//! 
+//!
 //! Implementation based upon https://github.com/tstellanova/cst816s/blob/master/examples/touchpad.rs
 //! and https://wiki.pine64.org/wiki/PineTime.
 
-use nrf52832_hal::{
-    gpio::{Output, Pin, PushPull},
-    prelude::OutputPin,
-};
-
-use crate::system::delay::Delay;
+use embassy_nrf::{gpio::Output, peripherals::P0_16};
+use embassy_time::Timer;
 
 /// Controller for the internal vibration motor
-pub struct VibrationMotor {
+pub struct VibrationMotor<'a> {
     /// Pin P0.16: High = off, Low = on
-    control_pin: Pin<Output<PushPull>>,
-    delay_source: Delay,
+    control_pin: Output<'a, P0_16>,
 }
 
-impl VibrationMotor {
+impl<'a> VibrationMotor<'a> {
     /// Initialize vibration controller
-    pub fn init(control_pin: Pin<Output<PushPull>>, delay_source: &mut Delay) -> Self {
-        Self { control_pin, delay_source: *delay_source }
+    pub fn init(control_pin: Output<'a, P0_16>) -> Self {
+        Self { control_pin }
     }
 
     /// Pulse the vibration motor once for the specified time in ms.
-    /// 
+    ///
     /// The default pulse duration is 100ms.
     #[allow(unused)]
     pub fn pulse_once(&mut self, duration_ms: Option<u32>) {
@@ -35,7 +30,7 @@ impl VibrationMotor {
 
     /// Pulse the vibration motor a specified amount of times for
     /// the specified time in ms.
-    /// 
+    ///
     /// The default pulse duration is 100ms.
     #[allow(unused)]
     pub fn pulse_times(&mut self, duration_ms: Option<u32>, times: u8) {
@@ -53,12 +48,11 @@ impl VibrationMotor {
         let _ = self.control_pin.set_high();
     }
 
-    fn wait(&mut self, duration: Option<u32>) {
-        self.delay_source.delay_us(
-            match duration {
-                Some(delay) => delay * 1_000,
-                None => 100_000,
-            }
-        );
+    async fn wait(&mut self, duration: Option<u32>) {
+        Timer::after_micros(match duration {
+            Some(delay) => delay as u64 * 1_000,
+            None => 100_000,
+        })
+        .await;
     }
 }

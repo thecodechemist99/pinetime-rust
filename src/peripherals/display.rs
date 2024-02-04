@@ -1,13 +1,14 @@
 //! Display control module for PineTime
 
-use nrf52832_hal::{
-    gpio::{Output, Pin, PushPull},
-    pac::SPIM0,
-    spim::Spim,
+use embassy_nrf::{
+    gpio::Output,
+    peripherals::{P0_18, P0_25, P0_26},
+    spim::{self, Spim},
 };
 
 use chrono::{FixedOffset, NaiveDateTime, TimeZone, Timelike};
 use display_interface_spi::SPIInterface;
+use embassy_time::Delay;
 use embedded_graphics::{
     mono_font::{iso_8859_1::FONT_10X20, MonoTextStyleBuilder},
     pixelcolor::Rgb565,
@@ -15,9 +16,10 @@ use embedded_graphics::{
     primitives::{Ellipse, PrimitiveStyle, PrimitiveStyleBuilder},
     text::Text,
 };
-use embedded_hal::delay::DelayNs;
 use mipidsi::{models::ST7789, Builder, Orientation};
 use profont::PROFONT_24_POINT;
+
+use super::battery::BatteryInfo;
 
 const LCD_W: u16 = 240;
 const LCD_H: u16 = 240;
@@ -27,23 +29,29 @@ const MARGIN: u16 = 20;
 const BACKGROUND_COLOR: Rgb565 = Rgb565::new(0, 0, 0);
 
 #[allow(unused)]
-pub struct Display {
+pub struct Display<'a, SPI>
+where
+    SPI: spim::Instance,
+{
     lcd: mipidsi::Display<
-        SPIInterface<Spim<SPIM0>, Pin<Output<PushPull>>, Pin<Output<PushPull>>>,
+        SPIInterface<Spim<'a, SPI>, Output<'a, P0_18>, Output<'a, P0_25>>,
         ST7789,
-        Pin<Output<PushPull>>,
+        Output<'a, P0_26>,
     >,
 }
 
-impl Display {
+impl<'a, SPI> Display<'a, SPI>
+where
+    SPI: spim::Instance,
+{
     /// Initialize the display
     #[allow(unused)]
     pub fn init(
-        spim: Spim<SPIM0>,
-        cs: Pin<Output<PushPull>>,
-        dc: Pin<Output<PushPull>>,
-        rst: Pin<Output<PushPull>>,
-        delay: &mut impl DelayNs,
+        spim: Spim<'a, SPI>,
+        cs: Output<'a, P0_25>,
+        dc: Output<'a, P0_18>,
+        rst: Output<'a, P0_26>,
+        delay: &mut Delay,
     ) -> Self {
         let lcd = Builder::st7789(SPIInterface::new(spim, dc, cs))
             .with_display_size(LCD_W, LCD_H)
@@ -62,7 +70,7 @@ impl Display {
     }
 
     /// Update the battery status
-    pub fn update_battery_status(&mut self, percent: u8, charging: bool) {
+    pub fn update_battery_status(&mut self, status: BatteryInfo) {
         // Choose text style
         let text_style = MonoTextStyleBuilder::new()
             .font(&FONT_10X20)
@@ -73,7 +81,11 @@ impl Display {
         let mut buf = [0u8; 6];
         let str = format_no_std::show(
             &mut buf,
-            format_args!("{}%/{}", percent, if charging { "C" } else { "D" }),
+            format_args!(
+                "{}%/{}",
+                status.percent,
+                if status.charging { "C" } else { "D" }
+            ),
         )
         .unwrap();
         let text = Text::new(str, Point::zero(), text_style.build());

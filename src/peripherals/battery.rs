@@ -1,24 +1,25 @@
 //! Battery status check
-//! 
+//!
 //! Implementation based upon https://github.com/dbrgn/pinetime-rtic/blob/master/pinetime-rtic/src/battery.rs
 //! and https://wiki.pine64.org/wiki/PineTime.
 
-use nrf52832_hal::{
-    gpio::{Floating, Input, p0, Pin},
-    prelude::*,
-    saadc::Saadc,
-};
+use embassy_nrf::{gpio::Input, peripherals::P0_12, saadc::Saadc};
+
+pub struct BatteryInfo {
+    /// Charging state
+    pub charging: bool,
+
+    /// Battery percentage
+    pub percent: u8,
+}
 
 #[allow(unused)]
-pub struct BatteryStatus {
+pub struct BatteryStatus<'a> {
     /// Pin P0.12: High = battery, Low = charging
-    pin_charge_indication: Pin<Input<Floating>>,
-
-    /// Pin P0.31: Voltage level
-    pin_voltage: p0::P0_31<Input<Floating>>,
+    pin_charge_indication: Input<'a, P0_12>,
 
     /// Saadc instance
-    saadc: Saadc,
+    saadc: Saadc<'a, 1>,
 
     /// Charging state
     charging: bool,
@@ -27,32 +28,35 @@ pub struct BatteryStatus {
     voltage: u8,
 }
 
-impl BatteryStatus {
+impl<'a> BatteryStatus<'_> {
     /// Initialize battery status
-    pub fn init(pin_charge_indication: Pin<Input<Floating>>, mut pin_voltage: p0::P0_31<Input<Floating>>, mut saadc: Saadc) -> Result<Self, Error> {
+    pub async fn init(
+        pin_charge_indication: Input<'static, P0_12>,
+        mut saadc: Saadc<'static, 1>,
+    ) -> Result<Self, Error> {
         // Get initial charging state
-        let charging = pin_charge_indication.is_low().unwrap();
+        let charging = pin_charge_indication.is_low();
 
         // Get initial voltage
-        let reading = match saadc.read(&mut pin_voltage) {
-            Ok(res) => Ok(res),
-            Err(_) => Err(Error::SaadcError),
-        }?;
-        let voltage = Self::convert_adc_measurement(&reading)?;
-        // let voltage = Self::convert_adc_measurement(&saadc.read(&mut pin_voltage).unwrap()).unwrap_or(0);
+        let mut buf = [0; 1];
+        saadc.sample(&mut buf).await;
+        let voltage = Self::convert_adc_measurement(&buf[0])?;
 
-        Ok(Self { pin_charge_indication, pin_voltage, saadc, charging, voltage })
+        Ok(Self {
+            pin_charge_indication,
+            saadc,
+            charging,
+            voltage,
+        })
     }
 
-    /// Convert an ADC measurement into a battery voltage in volts.
-    fn convert_adc_measurement(raw_measurement: &i16) -> Result<u8, Error> {
-        match raw_measurement {
-            0 ..= 4095 => {
-                let adc_val: u32 = (*raw_measurement as u16).into(); // keep as 32 bit for multiplication
-                let battery_voltage: u32 = (adc_val * 2000) / 1241; // multiply the ADC value by 2 * 1000 for mV and divide by (2 ^ 12 / 3.3V reference)
-                Ok((battery_voltage / 100) as u8)
-            },
-            _ => Err(Error::InvalidMeasurement),
+    // Return current state of the battery.
+    ///
+    /// This returns the stored value. To fetch current data, call `update()` first.
+    pub fn info(&self) -> BatteryInfo {
+        BatteryInfo {
+            charging: self.is_charging(),
+            percent: self.percent(),
         }
     }
 
@@ -82,14 +86,6 @@ impl BatteryStatus {
         }
     }
 
-    /// Return the current battery voltage in 0.1 volts.
-    ///
-    /// This returns the stored value. To fetch current data, call `update()` first.
-    #[allow(unused)]
-    pub fn voltage(&self) -> u8 {
-        self.voltage
-    }
-
     /// Update the current battery status by reading information from the
     /// hardware. Return whether or not the values changed.
     #[allow(unused)]
@@ -97,18 +93,16 @@ impl BatteryStatus {
         let mut changed = false;
 
         // Check charging status
-        let charging = self.pin_charge_indication.is_low().unwrap();
+        let charging = self.pin_charge_indication.is_low();
         if charging != self.charging {
             self.charging = charging;
             changed = true;
         }
 
         // Check voltage
-        let reading = match self.saadc.read(&mut self.pin_voltage) {
-            Ok(res) => Ok(res),
-            Err(_) => Err(Error::SaadcError),
-        }?;
-        let voltage = Self::convert_adc_measurement(&reading)?;
+        let mut buf = [0; 1];
+        self.saadc.sample(&mut buf);
+        let voltage = Self::convert_adc_measurement(&buf[0])?;
 
         if voltage != self.voltage {
             self.voltage = voltage;
@@ -117,11 +111,31 @@ impl BatteryStatus {
 
         Ok(changed)
     }
+
+    /// Return the current battery voltage in 0.1 volts.
+    ///
+    /// This returns the stored value. To fetch current data, call `update()` first.
+    #[allow(unused)]
+    pub fn voltage(&self) -> u8 {
+        self.voltage
+    }
+
+    /// Convert an ADC measurement into a battery voltage in volts.
+    fn convert_adc_measurement(raw_measurement: &i16) -> Result<u8, Error> {
+        match raw_measurement {
+            0..=4095 => {
+                let adc_val: u32 = (*raw_measurement as u16).into(); // keep as 32 bit for multiplication
+                let battery_voltage: u32 = (adc_val * 2000) / 1241; // multiply the ADC value by 2 * 1000 for mV and divide by (2 ^ 12 / 3.3V reference)
+                Ok((battery_voltage / 100) as u8)
+            }
+            _ => Err(Error::InvalidMeasurement),
+        }
+    }
 }
 
+#[allow(unused)]
 #[derive(Debug)]
 pub enum Error {
     InvalidMeasurement,
     SaadcError,
-    // SaadcError(<Saadc as _embedded_hal_adc_OneShot<Saadc, i16, p0::P0_31<Input<Floating>>>>::Error),
 }

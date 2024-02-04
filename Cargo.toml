@@ -14,7 +14,7 @@ cortex-m-rt = "0.7.3"
 
 # Embassy
 embassy-executor = { version = "0.5", features = ["defmt", "arch-cortex-m", "executor-thread", "integrated-timers"] }
-embassy-nrf = { version = "0.1", features = ["defmt", "nrf52832", "time-driver-rtc1", "gpiote", "unstable-pac", "time"] }
+embassy-nrf = { version = "0.1", features = ["defmt", "nrf52832", "time-driver-rtc1", "gpiote", "unstable-pac", "time", "nfc-pins-as-gpio"] }
 embassy-sync = "0.5"
 embassy-time = { version = "0.3", features = ["defmt", "defmt-timestamp-uptime"] }
 # embassy-net = { git = "https://github.com/embassy-rs/embassy", dir = "tree/master/embassy-net", branch = "master", features = ["defmt", "tcp", "dhcpv4", "medium-ethernet"], optional = true }
@@ -23,6 +23,7 @@ embassy-time = { version = "0.3", features = ["defmt", "defmt-timestamp-uptime"]
 # embedded-storage = "0.3.0"
 
 # IO
+debouncr = "0.2"
 embedded-io = "0.6"
 
 # Bluetooth
@@ -36,9 +37,13 @@ display-interface-spi = "0.4.1"
 embedded-graphics = "0.8"
 format_no_std = "1.0.0"
 mipidsi = "0.7"
+profont = "0.7"
+
+# Touch control
+cst816s = { version = "0.1", git = "https://github.com/thecodechemist99/cst816s" }
 
 # Debug probe
-defmt = "0.3"
+defmt = "=0.3.2"
 defmt-rtt = "0.4"
 panic-probe = { version = "0.3", features = ["print-defmt"] }
 

@@ -1,11 +1,11 @@
 //! Backlight control
-//! 
+//!
 //! Implementation based upon https://github.com/dbrgn/pinetime-rtic/blob/master/pinetime-rtic/src/backlight.rs
 //! and https://wiki.pine64.org/wiki/PineTime.
 
-use nrf52832_hal::{
-    gpio::{Output, Pin, PushPull},
-    prelude::*,
+use embassy_nrf::{
+    gpio::Output,
+    peripherals::{P0_14, P0_22, P0_23},
 };
 
 /// Control the backlight.
@@ -20,22 +20,22 @@ use nrf52832_hal::{
 /// Through combinations of these pins, 7 brightness levels (+ off) can be
 /// configured.
 #[allow(unused)]
-pub struct Backlight {
-    low: Pin<Output<PushPull>>,
-    mid: Pin<Output<PushPull>>,
-    high: Pin<Output<PushPull>>,
+pub struct Backlight<'a> {
+    low: Output<'a, P0_14>,
+    mid: Output<'a, P0_22>,
+    high: Output<'a, P0_23>,
 
     /// The current brightness level (value between 0 and 7).
     brightness: u8,
 }
 
-impl Backlight {
+impl<'a> Backlight<'a> {
     /// Initialize the backlight with the specified level (0–7).
     #[allow(unused)]
     pub fn init(
-        low: Pin<Output<PushPull>>,
-        mid: Pin<Output<PushPull>>,
-        high: Pin<Output<PushPull>>,
+        low: Output<'a, P0_14>,
+        mid: Output<'a, P0_22>,
+        high: Output<'a, P0_23>,
         brightness: u8,
     ) -> Self {
         let mut backlight = Self {
@@ -55,28 +55,28 @@ impl Backlight {
                 defmt::debug!("Setting backlight brightness to {}", brightness);
 
                 if brightness & 0x01 > 0 {
-                    self.low.set_low().unwrap();
+                    self.low.set_low();
                 } else {
-                    self.low.set_high().unwrap();
+                    self.low.set_high();
                 }
                 if brightness & 0x02 > 0 {
-                    self.mid.set_low().unwrap();
+                    self.mid.set_low();
                 } else {
-                    self.mid.set_high().unwrap();
+                    self.mid.set_high();
                 }
                 if brightness & 0x04 > 0 {
-                    self.high.set_low().unwrap();
+                    self.high.set_low();
                 } else {
-                    self.high.set_high().unwrap();
+                    self.high.set_high();
                 }
                 self.brightness = brightness;
 
                 Ok(())
-            },
+            }
             _ => Err(Error::OutOfBounds),
         }
     }
-    
+
     /// Turn off the backlight.
     #[allow(unused)]
     pub fn off(&mut self) {
