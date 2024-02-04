@@ -1,17 +1,14 @@
 #![no_std]
 #![no_main]
 
-mod system;
 mod peripherals;
+mod system;
 
 #[rtic::app(device = nrf52832_hal::pac, peripherals = true, dispatchers = [SWI0_EGU0, SWI1_EGU1, SWI2_EGU2, SWI3_EGU3, SWI4_EGU4, SWI5_EGU5])]
 mod app {
     // Panic handler and debugging
     #[cfg(not(test))]
-    use {
-        defmt_rtt as _,
-        panic_probe as _,
-    };
+    use {defmt_rtt as _, panic_probe as _};
 
     /// Terminates the application and makes `probe-run` exit with exit-code = 0
     #[cfg(debug_assertions)]
@@ -23,22 +20,16 @@ mod app {
 
     // Device
     use debouncr::{debounce_2, Debouncer, Edge, Repeat2};
-    use nrf52832_hal as hal;
     use hal::{
         gpio::{Floating, Input, Level, Output, Pin, PullUp, PushPull},
         pac,
         prelude::InputPin,
-        saadc::{Saadc, SaadcConfig, Resolution},
+        saadc::{Resolution, Saadc, SaadcConfig},
     };
+    use nrf52832_hal as hal;
     use rtic::Monotonic;
-    use rubble::link::{
-        MIN_PDU_BUF,
-        queue::SimpleQueue,
-    };
-    use rubble_nrf5x::{
-        radio::PacketBuffer,
-        timer::BleTimer,
-    };
+    use rubble::link::{queue::SimpleQueue, MIN_PDU_BUF};
+    use rubble_nrf5x::{radio::PacketBuffer, timer::BleTimer};
 
     // Crate
     use crate::peripherals::{
@@ -49,10 +40,7 @@ mod app {
         vibration::VibrationMotor,
     };
     use crate::system::{
-        bluetooth::Bluetooth,
-        delay::Delay,
-        i2c::I2CPeripheral,
-        monotonics::MonoTimer,
+        bluetooth::Bluetooth, delay::Delay, i2c::I2CPeripheral, monotonics::MonoTimer,
     };
 
     // Others
@@ -150,7 +138,8 @@ mod app {
             gpio.p0_12.into_floating_input().degrade(),
             gpio.p0_31.into_floating_input(),
             saadc,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Initialize Button
         let _ = gpio.p0_15.into_push_pull_output(Level::High);
@@ -179,11 +168,7 @@ mod app {
             sda: gpio.p0_06.into_floating_input().degrade(),
         };
 
-        let i2c = hal::Twim::new(
-            TWIM1,
-            i2c_pins,
-            hal::twim::Frequency::K400,
-        );
+        let i2c = hal::Twim::new(TWIM1, i2c_pins, hal::twim::Frequency::K400);
 
         // Initialize SPI
         let spi_pins = hal::spim::Pins {
@@ -222,8 +207,8 @@ mod app {
             gpio.p0_28.into_pullup_input().degrade(), // Touchpad external interrupt pin: P0.28/AIN4 (TP_INT)
             Some(gpio.p0_10.into_push_pull_output(Level::High).degrade()), // Touchpad reset pin: P0.10/NFC2 (TP_RESET)
         )
-            .unwrap()
-            .init(&mut delay);
+        .unwrap()
+        .init(&mut delay);
 
         // Schedule tasks immediately
         poll_button::spawn().unwrap();
@@ -326,12 +311,12 @@ mod app {
             0 => {
                 bl.brighter().unwrap();
                 enable_ui::spawn(true).unwrap();
-            },
+            }
             1..=6 => bl.brighter().unwrap(),
             _ => {
                 bl.off();
                 enable_ui::spawn(false).unwrap();
-            },
+            }
         };
     }
 
@@ -352,7 +337,11 @@ mod app {
         match gesture {
             TouchGesture::SingleClick => {
                 defmt::info!("Touch event detected: single click");
-            },
+            }
+            TouchGesture::DoubleClick => {
+                defmt::info!("Touch event detected: double click");
+                // update_backlight::spawn().unwrap();
+            }
             _ => {
                 defmt::info!("Touch event detected: other touch event");
             }
@@ -369,7 +358,6 @@ mod app {
             c.shared.display.lock(|d| {
                 d.clear();
             });
-
         }
     }
 
@@ -379,12 +367,10 @@ mod app {
     fn update_battery_status(c: update_battery_status::Context) {
         let changed = c.local.battery.update().unwrap();
         if changed && *c.shared.draw_ui {
-            show_battery_status::spawn(
-                c.local.battery.percent(),
-                c.local.battery.is_charging()
-            ).unwrap();
+            show_battery_status::spawn(c.local.battery.percent(), c.local.battery.is_charging())
+                .unwrap();
         }
-        
+
         // Re-schedule the timer interrupt in 1s
         update_battery_status::spawn_after(1.secs()).unwrap();
     }
@@ -413,8 +399,9 @@ mod app {
         if *c.shared.draw_ui {
             let utc = NaiveDateTime::from_timestamp_opt(
                 UTC_EPOCH + InstantU32::duration_since_epoch(now).to_secs() as i64,
-                0
-            ).unwrap();
+                0,
+            )
+            .unwrap();
             show_time::spawn(utc).unwrap();
         }
 
@@ -426,7 +413,7 @@ mod app {
     #[task(shared = [display], priority = 2)]
     fn show_time(mut c: show_time::Context, utc: NaiveDateTime) {
         // defmt::debug!("UTC time: {}:{}:{}", utc.hour(), utc.minute(), utc.second());
-    
+
         // Update UI
         c.shared.display.lock(|display| {
             display.update_time(utc, TIMEZONE);
@@ -437,5 +424,4 @@ mod app {
     fn notify(c: notify::Context) {
         c.local.vibration.pulse_once(Some(200));
     }
-
 }
