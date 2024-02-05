@@ -16,7 +16,7 @@ use embassy_executor::Spawner;
 use embassy_nrf::{
     bind_interrupts,
     gpio::{Input, Level, Output, OutputDrive, Pull},
-    peripherals::{P0_10, P0_13, P0_28, SPI2, TWISPI1},
+    peripherals::{P0_10, P0_13, P0_15, P0_28, SPI2, TWISPI1},
     saadc::{self, ChannelConfig, Resolution, Saadc},
     spim,
     twim::{self, Twim},
@@ -161,13 +161,17 @@ async fn update_time() {
 
 /// Polls the button state every 10ms
 #[embassy_executor::task(pool_size = 1)]
-async fn poll_button(pin: Input<'static, P0_13>) {
+async fn poll_button(mut enable: Output<'static, P0_15>, pin: Input<'static, P0_13>) {
     let mut debounce = debounce_2(false);
     loop {
+        // Enable button
+        enable.set_high();
+        // The button needs a short time to give stable outputs
+        Timer::after(Duration::from_nanos(1)).await;
+
         // Poll button
         let edge = debounce.update(pin.is_high());
         if edge == Some(Edge::Rising) {
-            defmt::info!("Button pressed!");
             unwrap!(Spawner::for_current_executor()
                 .await
                 .spawn(button_pressed()));
@@ -177,6 +181,10 @@ async fn poll_button(pin: Input<'static, P0_13>) {
         // defmt::info!("Button pressed!");
         // pin.wait_for_falling_edge().await;
         // defmt::info!("Button released!");
+
+        // Button consumes around 34µA when P0.15 is left high.
+        // To reduce current consumption, set it low most of the time.
+        enable.set_low();
 
         // Re-schedule the timer interrupt in 10ms
         Timer::after(Duration::from_millis(10)).await;
@@ -226,8 +234,8 @@ async fn main(_spawner: Spawner) {
     BATTERY_STATUS.signal(battery.info());
 
     // Initialize Button
-    let _ = Output::new(p.P0_15, Level::High, OutputDrive::Standard);
     let button = Input::new(p.P0_13, Pull::None);
+    let btn_enable = Output::new(p.P0_15, Level::Low, OutputDrive::Standard);
 
     // Initialize vibration motor
     let vibration = VibrationMotor::init(Output::new(p.P0_16, Level::High, OutputDrive::Standard));
@@ -273,7 +281,7 @@ async fn main(_spawner: Spawner) {
     defmt::info!("Initialization finished");
 
     // Schedule tasks
-    unwrap!(_spawner.spawn(poll_button(button)));
+    unwrap!(_spawner.spawn(poll_button(btn_enable, button)));
     unwrap!(_spawner.spawn(poll_touch(touch)));
     unwrap!(_spawner.spawn(update_battery_status(battery)));
     unwrap!(_spawner.spawn(update_brightness(backlight)));
