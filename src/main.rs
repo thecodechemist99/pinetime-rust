@@ -41,18 +41,11 @@ use peripherals::{
 use system::{bluetooth::Bluetooth, i2c::I2CPeripheral};
 
 // Others
-use chrono::NaiveDateTime;
-// use fugit::{ExtU32, TimerInstantU32 as InstantU32};
+use chrono::{NaiveDateTime, Timelike};
 
 // Include current UTC epoch at compile time
 include!(concat!(env!("OUT_DIR"), "/utc.rs"));
-const TIMEZONE: i32 = 2 * 3_600;
-
-// PineTime has a 32 MHz HSE (HFXO) and a 32.768 kHz LSE (LFXO)
-#[allow(dead_code)]
-const HFXO_FREQ_HZ: u32 = 32_000_000u32;
-#[allow(dead_code)]
-const LFXO_FREQ_HZ: u32 = 32_768u32;
+const TIMEZONE: i32 = 1 * 3_600;
 
 // Communication channels
 static BATTERY_STATUS: Signal<ThreadModeRawMutex, BatteryInfo> = Signal::new();
@@ -116,17 +109,35 @@ async fn update_brightness(mut backlight: Backlight<'static>) {
 
 #[embassy_executor::task(pool_size = 1)]
 async fn update_lcd(mut display: Display<'static, SPI2>) {
+    let mut tick = Ticker::every(Duration::from_secs(1));
     loop {
         if BATTERY_STATUS.signaled() {
-            display.update_battery_status(BATTERY_STATUS.wait().await);
+            let status = BATTERY_STATUS.wait().await;
+            defmt::info!(
+                "Battery status: {} ({})",
+                status.percent,
+                if status.charging {
+                    "charging"
+                } else {
+                    "discharging"
+                }
+            );
+            display.update_battery_status(status);
         }
 
         if TIME.signaled() {
-            display.update_time(TIME.wait().await, TIMEZONE);
+            let time = TIME.wait().await;
+            defmt::info!(
+                "Current time: {}:{}:{}",
+                time.time().hour(),
+                time.time().minute(),
+                time.time().second(),
+            );
+            display.update_time(time, TIMEZONE);
         }
 
         // Re-schedule the timer interrupt in 1s
-        Timer::after(Duration::from_secs(1)).await;
+        tick.next().await;
     }
 }
 
@@ -137,8 +148,8 @@ async fn update_time() {
     loop {
         // Calculate current time
         let now = Instant::now();
-        let utc = NaiveDateTime::from_timestamp_opt(UTC_EPOCH + now.elapsed().as_secs() as i64, 0)
-            .unwrap();
+        let utc = NaiveDateTime::from_timestamp_opt(UTC_EPOCH + now.as_secs() as i64, 0).unwrap();
+        defmt::info!("Time updated");
 
         // Send time to channel
         TIME.signal(utc);
