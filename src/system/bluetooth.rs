@@ -1,126 +1,86 @@
-use embassy_nrf::pac::{FICR, RADIO, TIMER1};
-use rubble::{
-    att::NoAttributes,
-    config::Config,
-    l2cap::{BleChannelMap, L2CAPState},
-    link::{
-        ad_structure::AdStructure,
-        queue::{PacketQueue, SimpleQueue},
-        Cmd, DeviceAddress, LinkLayer, Responder,
+//! Bluetooth module
+
+// Core
+use core::mem;
+
+// BLE
+use nrf_softdevice::{
+    self,
+    ble::advertisement_builder::{
+        Flag, LegacyAdvertisementBuilder, LegacyAdvertisementPayload, ServiceList, ServiceUuid16,
     },
-    security::NoSecurity,
-    time::{Duration as RubbleDuration, Timer},
-};
-use rubble_nrf5x::{
-    radio::{BleRadio, PacketBuffer},
-    timer::BleTimer,
-    utils::get_device_address,
+    raw, Config,
 };
 
-pub struct BleConfig {}
+pub static ADV_DATA: LegacyAdvertisementPayload = LegacyAdvertisementBuilder::new()
+    .flags(&[Flag::GeneralDiscovery, Flag::LE_Only])
+    .services_16(ServiceList::Complete, &[ServiceUuid16::BATTERY])
+    .full_name("HelloRust")
+    .build();
 
-impl Config for BleConfig {
-    type Timer = BleTimer<TIMER1>;
-    type Transmitter = BleRadio;
-    type ChannelMapper = BleChannelMap<NoAttributes, NoSecurity>;
-    type PacketQueue = &'static mut SimpleQueue;
+pub static SCAN_DATA: LegacyAdvertisementPayload = LegacyAdvertisementBuilder::new()
+    .services_128(
+        ServiceList::Complete,
+        &[0x9e7312e0_2354_11eb_9f10_fbc30a62cf38_u128.to_le_bytes()],
+    )
+    .build();
+
+pub async fn generate_config() -> Config {
+    Config {
+        clock: Some(raw::nrf_clock_lf_cfg_t {
+            source: raw::NRF_CLOCK_LF_SRC_RC as u8,
+            rc_ctiv: 16,
+            rc_temp_ctiv: 2,
+            accuracy: raw::NRF_CLOCK_LF_ACCURACY_500_PPM as u8,
+        }),
+        conn_gap: Some(raw::ble_gap_conn_cfg_t {
+            conn_count: 6,
+            event_length: 24,
+        }),
+        conn_gatt: Some(raw::ble_gatt_conn_cfg_t { att_mtu: 256 }),
+        gatts_attr_tab_size: Some(raw::ble_gatts_cfg_attr_tab_size_t {
+            attr_tab_size: raw::BLE_GATTS_ATTR_TAB_SIZE_DEFAULT,
+        }),
+        gap_role_count: Some(raw::ble_gap_cfg_role_count_t {
+            adv_set_count: 1,
+            periph_role_count: 3,
+            central_role_count: 3,
+            central_sec_count: 0,
+            _bitfield_1: raw::ble_gap_cfg_role_count_t::new_bitfield_1(0),
+        }),
+        gap_device_name: Some(raw::ble_gap_cfg_device_name_t {
+            p_value: b"PineTime" as *const u8 as _,
+            current_len: 9,
+            max_len: 9,
+            write_perm: unsafe { mem::zeroed() },
+            _bitfield_1: raw::ble_gap_cfg_device_name_t::new_bitfield_1(
+                raw::BLE_GATTS_VLOC_STACK as u8,
+            ),
+        }),
+        ..Default::default()
+    }
 }
 
-pub struct Bluetooth {
-    ble_ll: LinkLayer<BleConfig>,
-    ble_r: Responder<BleConfig>,
-    #[allow(unused)]
-    device_address: DeviceAddress,
-    radio: BleRadio,
+#[nrf_softdevice::gatt_service(uuid = "180f")]
+pub struct BatteryService {
+    #[characteristic(uuid = "2a19", read, notify)]
+    pub battery_level: u8,
 }
 
-impl Bluetooth {
-    pub fn init(
-        ble_timer: BleTimer<TIMER1>,
-        radio_peripheral: RADIO,
-        ficr_peripheral: &FICR,
-        ble_tx_buf: &'static mut PacketBuffer,
-        ble_rx_buf: &'static mut PacketBuffer,
-        tx_queue: &'static mut SimpleQueue,
-        rx_queue: &'static mut SimpleQueue,
-    ) -> Self {
-        // Get bluetooth device address
-        let device_address = get_device_address();
-        defmt::info!(
-            "Bluetooth device address: {:?}",
-            defmt::Debug2Format(&device_address)
-        );
+#[nrf_softdevice::gatt_service(uuid = "9e7312e0-2354-11eb-9f10-fbc30a62cf38")]
+pub struct FooService {
+    #[characteristic(
+        uuid = "9e7312e0-2354-11eb-9f10-fbc30a63cf38",
+        read,
+        write,
+        notify,
+        indicate
+    )]
+    pub foo: u16,
+}
 
-        // Initialize radio
-        let mut radio = BleRadio::new(radio_peripheral, ficr_peripheral, ble_tx_buf, ble_rx_buf);
-
-        // Create bluetooth TX/RX queues
-        let (tx, tx_cons) = tx_queue.split();
-        let (rx_prod, rx) = rx_queue.split();
-
-        // Create the actual BLE stack objects
-        let mut ble_ll: LinkLayer<BleConfig> = LinkLayer::new(device_address, ble_timer);
-        let ble_r: Responder<BleConfig> = Responder::new(
-            tx,
-            rx,
-            L2CAPState::new(BleChannelMap::with_attributes(NoAttributes)),
-        );
-
-        // Send BLE advertisement and set up regular interrupt
-        let next_update = ble_ll
-            .start_advertise(
-                // Values below 295ms seem not to work, for those
-                // the timer interrupt is only triggered once
-                RubbleDuration::millis(200),
-                &[AdStructure::CompleteLocalName("Rusty PineTime")],
-                &mut radio,
-                tx_cons,
-                rx_prod,
-            )
-            .unwrap();
-
-        ble_ll.timer().configure_interrupt(next_update);
-
-        Self {
-            ble_ll,
-            ble_r,
-            device_address,
-            radio,
-        }
-    }
-
-    pub fn handle_radio_interrupt(&mut self) -> bool {
-        if let Some(cmd) = self
-            .radio
-            .recv_interrupt(self.ble_ll.timer().now(), &mut self.ble_ll)
-        {
-            self.reset_interrupt(cmd)
-        } else {
-            false
-        }
-    }
-
-    pub fn handle_timer_interrupt(&mut self) -> bool {
-        if self.ble_ll.timer().is_interrupt_pending() {
-            self.ble_ll.timer().clear_interrupt();
-
-            let cmd = self.ble_ll.update_timer(&mut self.radio);
-            self.reset_interrupt(cmd)
-        } else {
-            false
-        }
-    }
-
-    pub fn drain_packets(&mut self) {
-        while self.ble_r.has_work() {
-            self.ble_r.process_one().unwrap();
-        }
-    }
-
-    fn reset_interrupt(&mut self, cmd: Cmd) -> bool {
-        self.radio.configure_receiver(cmd.radio);
-        self.ble_ll.timer().configure_interrupt(cmd.next_update);
-
-        cmd.queued_work
-    }
+#[nrf_softdevice::gatt_server]
+pub struct Server {
+    pub bas: BatteryService,
+    pub foo: FooService,
 }
