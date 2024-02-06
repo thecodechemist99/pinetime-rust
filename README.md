@@ -42,14 +42,14 @@ This project sets out to add the following features to make a usable firmware ou
 At the moment, the following features have been implemented (on top of the features from the original project):
 
 - A rudimentary UI showing the time and battery state
-  - The time is currently fetched during compilation on the host system and then continuously updated on device after boot, until an update via BLE is implemented.
-- Control of the vibration motor
-  - Duration and vibration count can be set
-- A very rudimentary battery percentage calculation
-  - This will be replaced with a better implementation at some point.
+- Control of the vibration motor (duration and vibration count can be set)
+- A very rudimentary battery percentage calculation (will be replaced with a better implementation at some point)
 - Basic touch detection
   - The driver crate used for this currently doesn’t support all touch gestures
   - Currently, basic touch detection is implemented
+- Bluetooth implementation
+  - Battery service (does not yet display the actual battery state)
+  - Fetch time from a current time service on a connected decive (e.g. smartphone)
 
 ## Development
 

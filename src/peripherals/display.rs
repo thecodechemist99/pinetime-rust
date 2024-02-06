@@ -6,7 +6,7 @@ use embassy_nrf::{
     spim::{self, Spim},
 };
 
-use chrono::{FixedOffset, NaiveDateTime, TimeZone, Timelike};
+use chrono::{NaiveDateTime, Timelike};
 use display_interface_spi::SPIInterface;
 use embassy_time::Delay;
 use embedded_graphics::{
@@ -94,12 +94,7 @@ where
     }
 
     /// Update the time display
-    pub fn update_time(&mut self, utc: NaiveDateTime, timezone: i32) {
-        // Calculate local time
-        let date_time = FixedOffset::east_opt(timezone)
-            .unwrap()
-            .from_utc_datetime(&utc);
-
+    pub fn update_time(&mut self, date_time: NaiveDateTime) {
         // Choose text style
         let text_style = MonoTextStyleBuilder::new()
             .font(&PROFONT_24_POINT)

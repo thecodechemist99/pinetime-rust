@@ -57,11 +57,12 @@ use system::{
 use chrono::{NaiveDateTime, Timelike};
 
 // Include current UTC epoch at compile time
-include!(concat!(env!("OUT_DIR"), "/utc.rs"));
-const TIMEZONE: i32 = 1 * 3_600;
+// include!(concat!(env!("OUT_DIR"), "/utc.rs"));
+// const TIMEZONE: i32 = 1 * 3_600;
 
 // Communication channels
 static BATTERY_STATUS: Signal<ThreadModeRawMutex, BatteryInfo> = Signal::new();
+static CTS_TIME: Signal<ThreadModeRawMutex, NaiveDateTime> = Signal::new();
 static INCREASE_BRIGHTNESS: Signal<ThreadModeRawMutex, bool> = Signal::new();
 static NOTIFY: Signal<ThreadModeRawMutex, u8> = Signal::new();
 static TIME: Signal<ThreadModeRawMutex, NaiveDateTime> = Signal::new();
@@ -91,17 +92,10 @@ async fn ble_runner(sd: &'static Softdevice, server: Server) {
 
         let client: CurrentTimeServiceClient = gatt_client::discover(&conn).await.unwrap();
 
-        // Read
-        let val = client.current_time_read().await.unwrap();
-        defmt::info!("read current time: {}", val);
-
-        let current_time = cts_get_epoch(&val);
-        defmt::info!(
-            "current time: {}:{}:{}",
-            current_time.hour(),
-            current_time.minute(),
-            current_time.second()
-        );
+        // Update time via CTS
+        let bytes = client.current_time_read().await.unwrap();
+        let current_time = cts_get_epoch(&bytes);
+        CTS_TIME.signal(current_time);
 
         // Enable current time notifications from the peripheral
         client.current_time_cccd_write(true).await.unwrap();
@@ -213,7 +207,7 @@ async fn update_lcd(mut display: Display<'static, SPI2>) {
                 time.time().minute(),
                 time.time().second(),
             );
-            display.update_time(time, TIMEZONE);
+            display.update_time(time);
         }
 
         // Re-schedule the timer interrupt in 1s
@@ -224,15 +218,25 @@ async fn update_lcd(mut display: Display<'static, SPI2>) {
 /// Get the current time.
 #[embassy_executor::task(pool_size = 1)]
 async fn update_time() {
+    let mut ref_time = NaiveDateTime::UNIX_EPOCH;
+    let mut instant = Instant::now();
     let mut tick = Ticker::every(Duration::from_secs(1));
     loop {
+        // Update time from CTS
+        if CTS_TIME.signaled() {
+            ref_time = CTS_TIME.wait().await;
+            instant = Instant::now();
+        }
+
         // Calculate current time
         let now = Instant::now();
-        let utc = NaiveDateTime::from_timestamp_opt(UTC_EPOCH + now.as_secs() as i64, 0).unwrap();
-        defmt::info!("Time updated");
+        let time = NaiveDateTime::from_timestamp_micros(
+            ref_time.timestamp_micros() + now.duration_since(instant).as_micros() as i64,
+        )
+        .unwrap();
 
         // Send time to channel
-        TIME.signal(utc);
+        TIME.signal(time);
 
         // Re-schedule the timer interrupt
         tick.next().await;
@@ -256,11 +260,6 @@ async fn poll_button(mut enable: Output<'static, P0_15>, pin: Input<'static, P0_
                 .await
                 .spawn(button_pressed()));
         }
-
-        // pin.wait_for_rising_edge().await;
-        // defmt::info!("Button pressed!");
-        // pin.wait_for_falling_edge().await;
-        // defmt::info!("Button released!");
 
         // Button consumes around 34µA when P0.15 is left high.
         // To reduce current consumption, set it low most of the time.
@@ -392,35 +391,3 @@ async fn main(_spawner: Spawner) {
     unwrap!(_spawner.spawn(update_time()));
     unwrap!(_spawner.spawn(notify(vibration)));
 }
-
-// c207: 49671  // year (1986)
-// 0b: 11       // month
-// 0f: 15       // day of month
-// 0d: 13       // hours
-// 25: 37       // minutes
-// 2a: 42       // seconds
-// 06: 6        // day of week (Saturday)
-// fe: 254      // 254/256 fractions of a second
-// 08: 8        // ?
-
-// ----------------------------------------
-
-// e807: 59399  // year (2024)
-// 02: 2        // month
-// 06: 6        // day of month
-// 10: 16       // hours
-// 13: 19       // minutes
-// 2d: 45       // seconds
-// 02: 2        // day of week?
-// 73: 115      // 115/256 fractions of a second
-
-// ----------------------------------------
-// ChatGPT:
-// year (bytes)
-// month (1 byte)
-// day (1 byte)
-// hours (1 byte)
-// minutes (1 byte)
-// seconds (1 byte)
-// day of week (1 byte) – 1–7 (Monday to Sunday)
-// Fractions 256 (1 byte) – Fractions of a second in 256th increments
