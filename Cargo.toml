@@ -31,7 +31,7 @@ embedded-io = "0.6"
 # rubble = { git = "https://github.com/thecodechemist99/rubble", dir = "tree/master/rubble"}
 # rubble-nrf5x = { git = "https://github.com/thecodechemist99/rubble", dir = "tree/master/rubble-nrf5x", features = ["52832"] }
 # Maybe switch to bleps in the future, but for now just take the easy route
-nrf-softdevice = { version = "0.1", features = ["ble-peripheral", "ble-gatt-server", "nrf52832", "s132"] }
+nrf-softdevice = { version = "0.1", features = ["ble-peripheral", "ble-gatt-server", "ble-gatt-client", "nrf52832", "s132"] }
 
 # Graphics
 chrono = { version = "0.4.24", default-features = false }
@@ -52,6 +52,7 @@ panic-probe = { version = "0.3", features = ["print-defmt"] }
 [profile.dev]
 opt-level = "z"
 strip = false
+debug = 2
 
 [profile.release]
 opt-level = "z"

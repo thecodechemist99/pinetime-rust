@@ -12,18 +12,29 @@ use nrf_softdevice::{
     raw, Config,
 };
 
+// Others
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+
 pub static ADV_DATA: LegacyAdvertisementPayload = LegacyAdvertisementBuilder::new()
     .flags(&[Flag::GeneralDiscovery, Flag::LE_Only])
     .services_16(ServiceList::Complete, &[ServiceUuid16::BATTERY])
-    .full_name("HelloRust")
+    .full_name("PineTime")
     .build();
 
 pub static SCAN_DATA: LegacyAdvertisementPayload = LegacyAdvertisementBuilder::new()
-    .services_128(
-        ServiceList::Complete,
-        &[0x9e7312e0_2354_11eb_9f10_fbc30a62cf38_u128.to_le_bytes()],
-    )
+    .services_16(ServiceList::Complete, &[ServiceUuid16::BATTERY])
     .build();
+
+#[nrf_softdevice::gatt_server]
+pub struct Server {
+    pub bas: BatteryService,
+}
+
+#[nrf_softdevice::gatt_service(uuid = "180f")]
+pub struct BatteryService {
+    #[characteristic(uuid = "2a19", read, notify)]
+    pub battery_level: u8,
+}
 
 pub async fn generate_config() -> Config {
     Config {
@@ -61,26 +72,19 @@ pub async fn generate_config() -> Config {
     }
 }
 
-#[nrf_softdevice::gatt_service(uuid = "180f")]
-pub struct BatteryService {
-    #[characteristic(uuid = "2a19", read, notify)]
-    pub battery_level: u8,
-}
+pub fn cts_get_epoch(buf: &[u8; 10]) -> NaiveDateTime {
+    let year = u16::from_le_bytes(buf[..2].try_into().ok().unwrap()) as i32;
+    let month = buf[2] as u32;
+    let day = buf[3] as u32;
+    let hour = buf[4] as u32;
+    let minute = buf[5] as u32;
+    let second = buf[6] as u32;
+    // let day_of_week = buf[7] as u32;
+    let fractions_256 = buf[8] as u32;
 
-#[nrf_softdevice::gatt_service(uuid = "9e7312e0-2354-11eb-9f10-fbc30a62cf38")]
-pub struct FooService {
-    #[characteristic(
-        uuid = "9e7312e0-2354-11eb-9f10-fbc30a63cf38",
-        read,
-        write,
-        notify,
-        indicate
-    )]
-    pub foo: u16,
-}
-
-#[nrf_softdevice::gatt_server]
-pub struct Server {
-    pub bas: BatteryService,
-    pub foo: FooService,
+    NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(year, month, day).unwrap(),
+        NaiveTime::from_hms_milli_opt(hour as u32, minute, second, fractions_256 / 256 * 1000)
+            .unwrap(),
+    )
 }
