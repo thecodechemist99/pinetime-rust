@@ -1,3 +1,5 @@
+use embassy_nrf::spim;
+
 pub(super) mod accelerometer;
 pub(super) mod backlight;
 pub(super) mod battery;
@@ -7,8 +9,11 @@ pub(super) mod touch;
 pub(super) mod vibration;
 
 /// API for accessing peripherals
-struct Peripherals {
+struct Peripherals<SPI>
+where
+    SPI: spim::Instance,
+{
     battery: battery::Battery,
     // button: ,
-    display: display::DisplayAPI,
+    display: display::Display<SPI>,
 }

@@ -182,7 +182,7 @@ async fn update_brightness(mut backlight: Backlight<'static>) {
 }
 
 #[embassy_executor::task(pool_size = 1)]
-async fn update_lcd(mut display: Display<'static, SPI2>) {
+async fn update_lcd(mut display: Display<SPI2>) {
     let mut tick = Ticker::every(Duration::from_secs(1));
     loop {
         if BATTERY_STATUS.signaled() {
@@ -196,7 +196,7 @@ async fn update_lcd(mut display: Display<'static, SPI2>) {
                     "discharging"
                 }
             );
-            display.update_battery_status(battery);
+            // display.update_battery_status(battery);
         }
 
         if TIME.signaled() {
@@ -207,7 +207,7 @@ async fn update_lcd(mut display: Display<'static, SPI2>) {
                 time.time().minute(),
                 time.time().second(),
             );
-            display.update_time(time);
+            // display.update_time(time);
         }
 
         // Re-schedule the timer interrupt in 1s
@@ -362,7 +362,6 @@ async fn main(_spawner: Spawner) {
         Output::new(p.P0_25, Level::Low, OutputDrive::Standard),
         Output::new(p.P0_18, Level::Low, OutputDrive::Standard),
         Output::new(p.P0_26, Level::Low, OutputDrive::Standard),
-        &mut Delay,
     );
     backlight.set(2).unwrap();
 
