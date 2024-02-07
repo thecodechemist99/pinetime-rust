@@ -9,7 +9,7 @@ pub(super) mod touch;
 pub(super) mod vibration;
 
 /// API for accessing peripherals
-struct Peripherals<SPI>
+pub struct Peripherals<SPI>
 where
     SPI: spim::Instance,
 {
