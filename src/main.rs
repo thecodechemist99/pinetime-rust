@@ -40,7 +40,7 @@ use nrf_softdevice::{
 // Crate
 use peripherals::{
     backlight::Backlight,
-    battery::{BatteryInfo, BatteryStatus},
+    battery::Battery,
     display::Display,
     touch::{TouchController, TouchGesture},
     vibration::VibrationMotor,
@@ -61,7 +61,7 @@ use chrono::{NaiveDateTime, Timelike};
 // const TIMEZONE: i32 = 1 * 3_600;
 
 // Communication channels
-static BATTERY_STATUS: Signal<ThreadModeRawMutex, BatteryInfo> = Signal::new();
+static BATTERY_STATUS: Signal<ThreadModeRawMutex, Battery> = Signal::new();
 static CTS_TIME: Signal<ThreadModeRawMutex, NaiveDateTime> = Signal::new();
 static INCREASE_BRIGHTNESS: Signal<ThreadModeRawMutex, bool> = Signal::new();
 static NOTIFY: Signal<ThreadModeRawMutex, u8> = Signal::new();
@@ -152,20 +152,20 @@ async fn notify(mut motor: VibrationMotor<'static>) {
     }
 }
 
-/// Fetch the battery status from the hardware.
-#[embassy_executor::task(pool_size = 1)]
-async fn update_battery_status(mut battery: BatteryStatus<'static>) {
-    loop {
-        if battery.update().unwrap() {
-            // Battery status changed
-            defmt::info!("Battery status updated");
-            BATTERY_STATUS.signal(battery.info());
-        };
+// /// Fetch the battery status from the hardware.
+// #[embassy_executor::task(pool_size = 1)]
+// async fn update_battery_status(mut battery: Battery) {
+//     loop {
+//         if battery.update().unwrap() {
+//             // Battery status changed
+//             defmt::info!("Battery status updated");
+//             BATTERY_STATUS.signal(battery.info());
+//         };
 
-        // Re-schedule the timer interrupt in 1s
-        Timer::after(Duration::from_secs(1)).await;
-    }
-}
+//         // Re-schedule the timer interrupt in 1s
+//         Timer::after(Duration::from_secs(1)).await;
+//     }
+// }
 
 /// Update backlight brightness
 #[embassy_executor::task(pool_size = 1)]
@@ -186,17 +186,17 @@ async fn update_lcd(mut display: Display<'static, SPI2>) {
     let mut tick = Ticker::every(Duration::from_secs(1));
     loop {
         if BATTERY_STATUS.signaled() {
-            let status = BATTERY_STATUS.wait().await;
+            let mut battery = BATTERY_STATUS.wait().await;
             defmt::info!(
                 "Battery status: {} ({})",
-                status.percent,
-                if status.charging {
+                battery.get_percent().await,
+                if battery.is_charging() {
                     "charging"
                 } else {
                     "discharging"
                 }
             );
-            display.update_battery_status(status);
+            display.update_battery_status(battery);
         }
 
         if TIME.signaled() {
@@ -321,10 +321,7 @@ async fn main(_spawner: Spawner) {
     );
 
     // Initalize Battery
-    let battery = BatteryStatus::init(Input::new(p.P0_12, Pull::None), saadc)
-        .await
-        .unwrap();
-    BATTERY_STATUS.signal(battery.info());
+    let battery = Battery::init(saadc, Input::new(p.P0_12, Pull::None));
 
     // Initialize Button
     let button = Input::new(p.P0_13, Pull::None);
@@ -385,7 +382,7 @@ async fn main(_spawner: Spawner) {
     unwrap!(_spawner.spawn(poll_button(btn_enable, button)));
     unwrap!(_spawner.spawn(poll_touch(touch)));
     unwrap!(_spawner.spawn(softdevice_task(sd)));
-    unwrap!(_spawner.spawn(update_battery_status(battery)));
+    // unwrap!(_spawner.spawn(update_battery_status(battery)));
     unwrap!(_spawner.spawn(update_brightness(backlight)));
     unwrap!(_spawner.spawn(update_lcd(display)));
     unwrap!(_spawner.spawn(update_time()));

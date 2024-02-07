@@ -19,7 +19,7 @@ use embedded_graphics::{
 use mipidsi::{models::ST7789, Builder, Orientation};
 use profont::PROFONT_24_POINT;
 
-use super::battery::BatteryInfo;
+use super::battery::Battery;
 
 const LCD_W: u16 = 240;
 const LCD_H: u16 = 240;
@@ -70,7 +70,7 @@ where
     }
 
     /// Update the battery status
-    pub fn update_battery_status(&mut self, status: BatteryInfo) {
+    pub async fn update_battery_status(&mut self, mut battery: Battery) {
         // Choose text style
         let text_style = MonoTextStyleBuilder::new()
             .font(&FONT_10X20)
@@ -83,8 +83,8 @@ where
             &mut buf,
             format_args!(
                 "{}%/{}",
-                status.percent,
-                if status.charging { "C" } else { "D" }
+                battery.get_percent().await,
+                if battery.is_charging() { "C" } else { "D" }
             ),
         )
         .unwrap();
@@ -155,5 +155,30 @@ fn calc_dot_pos(diameter: i32, seconds: i32) -> Point {
         ),
         38..=52 => Point::new(0, LCD_H as i32 - (seconds - 36) * sec_h),
         _ => Point::new((seconds - 52) * sec_w, 0),
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum Brightness {
+    LEVEL0 = 0,
+    LEVEL1 = 1,
+    LEVEL2 = 2,
+    LEVEL3 = 3,
+    LEVEL4 = 4,
+    LEVEL5 = 5,
+    LEVEL6 = 6,
+    LEVEL7 = 7,
+}
+
+pub(crate) struct DisplayAPI {
+    brightness: Brightness,
+}
+
+impl DisplayAPI {
+    pub fn get_brightness(&self) -> Brightness {
+        self.brightness
+    }
+    pub fn set_brightness(&mut self, level: Brightness) {
+        self.brightness = level;
     }
 }
