@@ -9,8 +9,7 @@ use embassy_nrf::{gpio::Input, peripherals::P0_12, saadc::Saadc};
 struct BatteryConfig<'a> {
     /// ADC instance for battery voltage measurement
     adc: Saadc<'a, 1>,
-    /// Charge indication pin:
-    /// high = battery, low = charging
+    /// Charge indication pin (low = charging)
     pin_charge_indication: Input<'a, P0_12>,
 }
 

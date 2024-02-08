@@ -2,7 +2,7 @@
 
 use embassy_nrf::{
     gpio::Output,
-    peripherals::{P0_18, P0_25, P0_26},
+    peripherals::{P0_14, P0_18, P0_22, P0_23, P0_25, P0_26},
     spim::{self, Spim},
 };
 
@@ -18,8 +18,6 @@ use embedded_graphics::{
 };
 use mipidsi::{models::ST7789, Builder, Orientation};
 use profont::PROFONT_24_POINT;
-
-use super::battery::Battery;
 
 // const LCD_W: u16 = 240;
 // const LCD_H: u16 = 240;
@@ -171,6 +169,24 @@ pub enum Brightness {
     LEVEL7 = 7,
 }
 
+pub struct BacklightPins<'a> {
+    low: Output<'a, P0_14>,
+    mid: Output<'a, P0_22>,
+    high: Output<'a, P0_23>,
+}
+
+impl BacklightPins<'_> {
+    /// Configure backlight pins on boot
+    pub fn init(
+        low: Output<'static, P0_14>,
+        mid: Output<'static, P0_22>,
+        high: Output<'static, P0_23>,
+    ) -> Self {
+        Self { low, mid, high }
+    }
+}
+
+#[allow(unused)]
 struct DisplayConfig<'a, SPI>
 where
     SPI: spim::Instance,
@@ -181,8 +197,11 @@ where
         ST7789,
         Output<'a, P0_26>,
     >,
+    // Backlight pins
+    pins_backlight: BacklightPins<'a>,
 }
 
+#[allow(unused)]
 pub struct Display<SPI>
 where
     SPI: spim::Instance,
@@ -203,6 +222,7 @@ where
         cs_pin: Output<'static, P0_25>,
         dc_pin: Output<'static, P0_18>,
         rst_pin: Output<'static, P0_26>,
+        backlight: BacklightPins<'static>,
     ) -> Self {
         Self {
             config: DisplayConfig {
@@ -211,10 +231,16 @@ where
                     .with_orientation(Orientation::Portrait(false))
                     .init(&mut Delay, Some(rst_pin))
                     .unwrap(),
+                pins_backlight: BacklightPins {
+                    low: backlight.low,
+                    mid: backlight.mid,
+                    high: backlight.high,
+                },
             },
             brightness: Brightness::LEVEL0,
         }
     }
+    #[allow(unused)]
     /// Clear the display
     pub fn clear(&mut self, color: Rgb565) -> Result<(), mipidsi::Error> {
         self.config.display.clear(color)

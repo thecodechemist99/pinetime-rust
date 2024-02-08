@@ -11,19 +11,18 @@ use defmt_rtt as _;
 use panic_probe as _;
 
 // Device
-use debouncr::{debounce_2, Edge};
 use embassy_executor::Spawner;
 use embassy_nrf::{
     bind_interrupts,
     gpio::{Input, Level, Output, OutputDrive, Pull},
     interrupt::{self, InterruptExt, Priority},
-    peripherals::{P0_10, P0_13, P0_15, P0_28, SPI2, TWISPI1},
+    peripherals::{SPI2, TWISPI1},
     saadc::{self, ChannelConfig, Resolution, Saadc},
     spim,
     twim::{self, Twim},
 };
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, signal::Signal};
-use embassy_time::{Delay, Duration, Instant, Ticker, Timer};
+use embassy_time::{Duration, Instant, Ticker, Timer};
 
 bind_interrupts!(struct Irqs {
     SAADC => saadc::InterruptHandler;
@@ -39,32 +38,24 @@ use nrf_softdevice::{
 
 // Crate
 use peripherals::{
-    backlight::Backlight,
     battery::Battery,
-    display::Display,
+    button::Button,
+    display::{BacklightPins, Brightness, Display},
     touch::{TouchController, TouchGesture},
-    vibration::VibrationMotor,
+    vibrator::Vibrator,
 };
-use system::{
-    bluetooth::{
-        cts_get_epoch, generate_config, BatteryServiceEvent, Server, ServerEvent, ADV_DATA,
-        SCAN_DATA,
-    },
-    i2c::I2CPeripheral,
+use system::bluetooth::{
+    cts_get_epoch, generate_config, BatteryServiceEvent, Server, ServerEvent, ADV_DATA, SCAN_DATA,
 };
 
 // Others
 use chrono::{NaiveDateTime, Timelike};
 
-// Include current UTC epoch at compile time
-// include!(concat!(env!("OUT_DIR"), "/utc.rs"));
-// const TIMEZONE: i32 = 1 * 3_600;
-
 // Communication channels
-static BATTERY_STATUS: Signal<ThreadModeRawMutex, Battery> = Signal::new();
+static BATTERY_STATUS: Signal<ThreadModeRawMutex, (u8, bool)> = Signal::new();
 static CTS_TIME: Signal<ThreadModeRawMutex, NaiveDateTime> = Signal::new();
 static INCREASE_BRIGHTNESS: Signal<ThreadModeRawMutex, bool> = Signal::new();
-static NOTIFY: Signal<ThreadModeRawMutex, u8> = Signal::new();
+// static NOTIFY: Signal<ThreadModeRawMutex, u8> = Signal::new();
 static TIME: Signal<ThreadModeRawMutex, NaiveDateTime> = Signal::new();
 static TOUCH_EVENT: Signal<ThreadModeRawMutex, TouchGesture> = Signal::new();
 
@@ -134,50 +125,33 @@ async fn button_pressed() {
     INCREASE_BRIGHTNESS.signal(true);
 }
 
-/// Check for notifications every 100ms
-#[embassy_executor::task(pool_size = 1)]
-async fn notify(mut motor: VibrationMotor<'static>) {
-    loop {
-        if NOTIFY.signaled() {
-            // Vibrate signaled amount of times
-            let count = NOTIFY.wait().await;
-            match count {
-                1 => motor.pulse_once(Some(200)),
-                _ => motor.pulse_times(Some(200), count),
-            }
-        }
-
-        // Re-schedule the timer interrupt in 100ms
-        Timer::after(Duration::from_millis(100)).await;
-    }
-}
-
-// /// Fetch the battery status from the hardware.
+// /// Check for notifications every 100ms
 // #[embassy_executor::task(pool_size = 1)]
-// async fn update_battery_status(mut battery: Battery) {
+// async fn notify(mut vibrator: Vibrator) {
 //     loop {
-//         if battery.update().unwrap() {
-//             // Battery status changed
-//             defmt::info!("Battery status updated");
-//             BATTERY_STATUS.signal(battery.info());
-//         };
+//         if NOTIFY.signaled() {
+//             // Vibrate signaled amount of times
+//             let count = NOTIFY.wait().await;
+//             match count {
+//                 1 => vibrator.pulse(PulseLength::SHORT, None).await,
+//                 _ => vibrator.pulse(PulseLength::SHORT, Some(count)).await,
+//             }
+//         }
 
-//         // Re-schedule the timer interrupt in 1s
-//         Timer::after(Duration::from_secs(1)).await;
+//         // Re-schedule the timer interrupt in 100ms
+//         Timer::after(Duration::from_millis(100)).await;
 //     }
 // }
 
-/// Update backlight brightness
+/// Fetch the battery status from the hardware.
 #[embassy_executor::task(pool_size = 1)]
-async fn update_brightness(mut backlight: Backlight<'static>) {
+async fn update_battery_status(mut battery: Battery) {
     loop {
-        if INCREASE_BRIGHTNESS.wait().await {
-            if backlight.get_brightness() < 7 {
-                backlight.brighter().unwrap();
-            } else {
-                backlight.off();
-            }
-        }
+        let status = (battery.get_percent().await, battery.is_charging());
+        BATTERY_STATUS.signal(status);
+
+        // Re-schedule the timer interrupt in 1s
+        Timer::after(Duration::from_secs(1)).await;
     }
 }
 
@@ -185,16 +159,25 @@ async fn update_brightness(mut backlight: Backlight<'static>) {
 async fn update_lcd(mut display: Display<SPI2>) {
     let mut tick = Ticker::every(Duration::from_secs(1));
     loop {
+        if INCREASE_BRIGHTNESS.signaled() {
+            display.set_brightness(match display.get_brightness() {
+                Brightness::LEVEL0 => Brightness::LEVEL1,
+                Brightness::LEVEL1 => Brightness::LEVEL2,
+                Brightness::LEVEL2 => Brightness::LEVEL3,
+                Brightness::LEVEL3 => Brightness::LEVEL4,
+                Brightness::LEVEL4 => Brightness::LEVEL5,
+                Brightness::LEVEL5 => Brightness::LEVEL6,
+                Brightness::LEVEL6 => Brightness::LEVEL7,
+                Brightness::LEVEL7 => Brightness::LEVEL0,
+            });
+        }
+
         if BATTERY_STATUS.signaled() {
-            let mut battery = BATTERY_STATUS.wait().await;
+            let (percent, charging) = BATTERY_STATUS.wait().await;
             defmt::info!(
                 "Battery status: {} ({})",
-                battery.get_percent().await,
-                if battery.is_charging() {
-                    "charging"
-                } else {
-                    "discharging"
-                }
+                percent,
+                if charging { "charging" } else { "discharging" }
             );
             // display.update_battery_status(battery);
         }
@@ -243,36 +226,20 @@ async fn update_time() {
     }
 }
 
-/// Polls the button state every 10ms
+/// Poll the button state every 10ms
 #[embassy_executor::task(pool_size = 1)]
-async fn poll_button(mut enable: Output<'static, P0_15>, pin: Input<'static, P0_13>) {
-    let mut debounce = debounce_2(false);
+async fn poll_button(mut button: Button) {
     loop {
-        // Enable button
-        enable.set_high();
-        // The button needs a short time to give stable outputs
-        Timer::after(Duration::from_nanos(1)).await;
-
-        // Poll button
-        let edge = debounce.update(pin.is_high());
-        if edge == Some(Edge::Rising) {
-            unwrap!(Spawner::for_current_executor()
-                .await
-                .spawn(button_pressed()));
-        }
-
-        // Button consumes around 34µA when P0.15 is left high.
-        // To reduce current consumption, set it low most of the time.
-        enable.set_low();
+        INCREASE_BRIGHTNESS.signal(button.pressed().await);
 
         // Re-schedule the timer interrupt in 10ms
         Timer::after(Duration::from_millis(10)).await;
     }
 }
 
-/// Polls the touch interrupt pin every 2ms
+/// Check for new touch event every 2ms
 #[embassy_executor::task(pool_size = 1)]
-async fn poll_touch(mut touch: TouchController<'static, TWISPI1, P0_28, P0_10>) {
+async fn poll_touch(mut touch: TouchController<TWISPI1>) {
     loop {
         // Check for touch event
         if let Some(gesture) = touch.try_event_detected() {
@@ -290,100 +257,188 @@ async fn softdevice_task(sd: &'static Softdevice) -> ! {
     sd.run().await
 }
 
+// #[embassy_executor::main]
+// async fn main(_spawner: Spawner) {
+//     // 0 is Highest. Lower priority number can preempt higher priority number
+//     // SoftDevice has reserved priorities 0 (default), 1, and 4
+//     let mut config = embassy_nrf::config::Config::default();
+//     config.gpiote_interrupt_priority = Priority::P2;
+//     config.time_interrupt_priority = Priority::P2;
+//     let mut p = embassy_nrf::init(config);
+//     defmt::info!("Initializing");
+
+//     // Initialize SAADC
+//     let mut saadc_config = saadc::Config::default();
+//     // Set resolution to 12bit, necessary for correct battery status calculation
+//     saadc_config.resolution = Resolution::_12BIT;
+//     // Pin P0.31: Voltage level
+//     let channel_config = ChannelConfig::single_ended(&mut p.P0_31);
+//     // Priority levels 0 (default), 1, and 4 are reserved for SoftDevice
+//     interrupt::SAADC.set_priority(interrupt::Priority::P3);
+
+//     let saadc = Saadc::new(p.SAADC, Irqs, saadc_config, [channel_config]);
+//     saadc.calibrate().await;
+
+//     // Initialize Backlight
+//     let mut backlight = Backlight::init(
+//         Output::new(p.P0_14, Level::High, OutputDrive::Standard),
+//         Output::new(p.P0_22, Level::High, OutputDrive::Standard),
+//         Output::new(p.P0_23, Level::High, OutputDrive::Standard),
+//         0,
+//     );
+
+//     // Initalize Battery
+//     let battery = Battery::init(saadc, Input::new(p.P0_12, Pull::None));
+
+//     // Initialize Button
+//     let button = Input::new(p.P0_13, Pull::None);
+//     let btn_enable = Output::new(p.P0_15, Level::Low, OutputDrive::Standard);
+
+//     // Initialize vibration motor
+//     let vibration = VibrationMotor::init(Output::new(p.P0_16, Level::High, OutputDrive::Standard));
+
+//     // Initialize Bluetooth
+//     let ble_config = generate_config().await;
+//     let sd = Softdevice::enable(&ble_config);
+//     let server = Server::new(sd).unwrap();
+
+//     // Initialize I2C
+//     let mut i2c_config = twim::Config::default();
+//     // Use I2C at 400KHz (the fastest clock available on the nRF52832),
+//     i2c_config.frequency = twim::Frequency::K400;
+//     // Priority levels 0 (default), 1, and 4 are reserved for SoftDevice
+//     interrupt::SPIM1_SPIS1_TWIM1_TWIS1_SPI1_TWI1.set_priority(interrupt::Priority::P3);
+
+//     let i2c = Twim::new(p.TWISPI1, Irqs, p.P0_06, p.P0_07, i2c_config);
+
+//     // Initialize SPI
+//     let mut spim_config = spim::Config::default();
+//     // Use SPI at 8MHz (the fastest clock available on the nRF52832),
+//     // otherwise refreshing will be super slow.
+//     spim_config.frequency = spim::Frequency::M8;
+//     // SPI must be used in mode 3. Mode 0 (the default) won't work.
+//     spim_config.mode = spim::MODE_3;
+//     // Priority levels 0 (default), 1, and 4 are reserved for SoftDevice
+//     interrupt::SPIM2_SPIS2_SPI2.set_priority(interrupt::Priority::P3);
+
+//     let spim = spim::Spim::new(p.SPI2, Irqs, p.P0_02, p.P0_04, p.P0_03, spim_config);
+
+//     // Initialize LCD
+//     let display = Display::init(
+//         spim,
+//         Output::new(p.P0_25, Level::Low, OutputDrive::Standard),
+//         Output::new(p.P0_18, Level::Low, OutputDrive::Standard),
+//         Output::new(p.P0_26, Level::Low, OutputDrive::Standard),
+//     );
+//     backlight.set(2).unwrap();
+
+//     // Initialize touch controller
+//     let touch = TouchController::new(
+//         i2c,
+//         Input::new(p.P0_28, Pull::Up), // Touchpad external interrupt pin: P0.28/AIN4 (TP_INT)
+//         Some(Output::new(p.P0_10, Level::High, OutputDrive::Standard)), // Touchpad reset pin: P0.10/NFC2 (TP_RESET)
+//     )
+//     .unwrap()
+//     .init(&mut Delay);
+
+//     defmt::info!("Initialization finished");
+
+//     // Schedule tasks
+//     unwrap!(_spawner.spawn(ble_runner(sd, server)));
+//     unwrap!(_spawner.spawn(poll_button(btn_enable, button)));
+//     unwrap!(_spawner.spawn(poll_touch(touch)));
+//     unwrap!(_spawner.spawn(softdevice_task(sd)));
+//     // unwrap!(_spawner.spawn(update_battery_status(battery)));
+//     unwrap!(_spawner.spawn(update_brightness(backlight)));
+//     unwrap!(_spawner.spawn(update_lcd(display)));
+//     unwrap!(_spawner.spawn(update_time()));
+//     unwrap!(_spawner.spawn(notify(vibration)));
+// }
+
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
-    // 0 is Highest. Lower priority number can preempt higher priority number
-    // SoftDevice has reserved priorities 0 (default), 1, and 4
     let mut config = embassy_nrf::config::Config::default();
+    // Configure interrupt priorities to exclude 0 (default), 1, and 4,
+    // which are reserved for the SoftDevice
     config.gpiote_interrupt_priority = Priority::P2;
     config.time_interrupt_priority = Priority::P2;
     let mut p = embassy_nrf::init(config);
-    defmt::info!("Initializing");
 
-    // Initialize SAADC
-    let mut saadc_config = saadc::Config::default();
-    // Set resolution to 12bit, necessary for correct battery status calculation
-    saadc_config.resolution = Resolution::_12BIT;
-    // Pin P0.31: Voltage level
-    let channel_config = ChannelConfig::single_ended(&mut p.P0_31);
-    // Priority levels 0 (default), 1, and 4 are reserved for SoftDevice
-    interrupt::SAADC.set_priority(interrupt::Priority::P3);
+    defmt::info!("Initializing system ...");
 
-    let saadc = Saadc::new(p.SAADC, Irqs, saadc_config, [channel_config]);
-    saadc.calibrate().await;
-
-    // Initialize Backlight
-    let mut backlight = Backlight::init(
-        Output::new(p.P0_14, Level::High, OutputDrive::Standard),
-        Output::new(p.P0_22, Level::High, OutputDrive::Standard),
-        Output::new(p.P0_23, Level::High, OutputDrive::Standard),
-        0,
-    );
-
-    // Initalize Battery
-    let battery = Battery::init(saadc, Input::new(p.P0_12, Pull::None));
-
-    // Initialize Button
-    let button = Input::new(p.P0_13, Pull::None);
-    let btn_enable = Output::new(p.P0_15, Level::Low, OutputDrive::Standard);
-
-    // Initialize vibration motor
-    let vibration = VibrationMotor::init(Output::new(p.P0_16, Level::High, OutputDrive::Standard));
-
-    // Initialize Bluetooth
-    let ble_config = generate_config().await;
-    let sd = Softdevice::enable(&ble_config);
-    let server = Server::new(sd).unwrap();
-
-    // Initialize I2C
-    let mut i2c_config = twim::Config::default();
-    // Use I2C at 400KHz (the fastest clock available on the nRF52832),
-    i2c_config.frequency = twim::Frequency::K400;
+    // == Initialize TWI/I2C ==
+    let mut twi_config = twim::Config::default();
+    // Use TWI at 400KHz (fastest clock available on the nRF52832)
+    twi_config.frequency = twim::Frequency::K400;
     // Priority levels 0 (default), 1, and 4 are reserved for SoftDevice
     interrupt::SPIM1_SPIS1_TWIM1_TWIS1_SPI1_TWI1.set_priority(interrupt::Priority::P3);
-
-    let i2c = Twim::new(p.TWISPI1, Irqs, p.P0_06, p.P0_07, i2c_config);
+    let twi = Twim::new(p.TWISPI1, Irqs, p.P0_06, p.P0_07, twi_config);
 
     // Initialize SPI
     let mut spim_config = spim::Config::default();
-    // Use SPI at 8MHz (the fastest clock available on the nRF52832),
-    // otherwise refreshing will be super slow.
+    // Use SPI at 8MHz (fastest clock available on the nRF52832)
     spim_config.frequency = spim::Frequency::M8;
-    // SPI must be used in mode 3. Mode 0 (the default) won't work.
+    // SPI must be used in mode 3, node 0 (the default) won't work.
     spim_config.mode = spim::MODE_3;
     // Priority levels 0 (default), 1, and 4 are reserved for SoftDevice
     interrupt::SPIM2_SPIS2_SPI2.set_priority(interrupt::Priority::P3);
 
+    // == Initialize Bluetooth ==
+    let ble_config = generate_config().await;
+    let sd = Softdevice::enable(&ble_config);
+    let server = Server::new(sd).unwrap();
+
+    defmt::info!("Initializing peripherals ...");
+
+    // == Initalize ADC ==
+    let mut adc_config = saadc::Config::default();
+    // Ensure correct battery status calculation
+    adc_config.resolution = Resolution::_12BIT;
+    let channel_config = ChannelConfig::single_ended(&mut p.P0_31);
+    // Priority levels 0 (default), 1, and 4 are reserved for SoftDevice
+    interrupt::SAADC.set_priority(interrupt::Priority::P3);
+    let adc = Saadc::new(p.SAADC, Irqs, adc_config, [channel_config]);
+    adc.calibrate().await;
+
+    // == Initialize Battery ==
+    let charge_indicator = Input::new(p.P0_12, Pull::None);
+    let battery = Battery::init(adc, charge_indicator);
+
+    // == Initialize Button ==
+    let button_pin = Input::new(p.P0_13, Pull::None);
+    let enable_pin = Output::new(p.P0_15, Level::Low, OutputDrive::Standard);
+    let button = Button::init(button_pin, enable_pin);
+
+    // == Initialize Vibrator ==
+    let enable_pin = Output::new(p.P0_16, Level::High, OutputDrive::Standard);
+    let _vibrator = Vibrator::init(enable_pin);
+
+    // == Initialize LCD ==
     let spim = spim::Spim::new(p.SPI2, Irqs, p.P0_02, p.P0_04, p.P0_03, spim_config);
-
-    // Initialize LCD
-    let display = Display::init(
-        spim,
-        Output::new(p.P0_25, Level::Low, OutputDrive::Standard),
-        Output::new(p.P0_18, Level::Low, OutputDrive::Standard),
-        Output::new(p.P0_26, Level::Low, OutputDrive::Standard),
+    let cs_pin = Output::new(p.P0_25, Level::Low, OutputDrive::Standard);
+    let dc_pin = Output::new(p.P0_18, Level::Low, OutputDrive::Standard);
+    let reset_pin = Output::new(p.P0_26, Level::Low, OutputDrive::Standard);
+    let backlight = BacklightPins::init(
+        Output::new(p.P0_14, Level::High, OutputDrive::Standard),
+        Output::new(p.P0_22, Level::High, OutputDrive::Standard),
+        Output::new(p.P0_23, Level::High, OutputDrive::Standard),
     );
-    backlight.set(2).unwrap();
+    let display = Display::init(spim, cs_pin, dc_pin, reset_pin, backlight);
 
-    // Initialize touch controller
-    let touch = TouchController::new(
-        i2c,
-        Input::new(p.P0_28, Pull::Up), // Touchpad external interrupt pin: P0.28/AIN4 (TP_INT)
-        Some(Output::new(p.P0_10, Level::High, OutputDrive::Standard)), // Touchpad reset pin: P0.10/NFC2 (TP_RESET)
-    )
-    .unwrap()
-    .init(&mut Delay);
+    // == Initialize Touch Controller ==
+    let interrupt_pin = Input::new(p.P0_28, Pull::Up);
+    let reset_pin = Output::new(p.P0_10, Level::High, OutputDrive::Standard);
+    let touch = TouchController::init(twi, interrupt_pin, reset_pin);
 
     defmt::info!("Initialization finished");
 
     // Schedule tasks
     unwrap!(_spawner.spawn(ble_runner(sd, server)));
-    unwrap!(_spawner.spawn(poll_button(btn_enable, button)));
+    unwrap!(_spawner.spawn(poll_button(button)));
     unwrap!(_spawner.spawn(poll_touch(touch)));
     unwrap!(_spawner.spawn(softdevice_task(sd)));
-    // unwrap!(_spawner.spawn(update_battery_status(battery)));
-    unwrap!(_spawner.spawn(update_brightness(backlight)));
+    unwrap!(_spawner.spawn(update_battery_status(battery)));
     unwrap!(_spawner.spawn(update_lcd(display)));
     unwrap!(_spawner.spawn(update_time()));
-    unwrap!(_spawner.spawn(notify(vibration)));
+    // unwrap!(_spawner.spawn(notify(vibrator)));
 }
