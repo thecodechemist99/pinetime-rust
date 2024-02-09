@@ -10,10 +10,7 @@ use defmt::unwrap;
 use defmt_rtt as _;
 use panic_probe as _;
 
-// Core
-use core::mem;
-
-// Device
+// System
 use embassy_executor::Spawner;
 use embassy_nrf::{
     bind_interrupts,
@@ -25,7 +22,7 @@ use embassy_nrf::{
     twim::{self, Twim},
 };
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, signal::Signal};
-use embassy_time::{Duration, Instant, Ticker, Timer};
+use embassy_time::{Duration, Ticker, Timer};
 
 bind_interrupts!(struct Irqs {
     SAADC => saadc::InterruptHandler;
@@ -34,10 +31,7 @@ bind_interrupts!(struct Irqs {
 });
 
 // BLE
-use nrf_softdevice::{
-    ble::{gatt_client, gatt_server, peripheral},
-    raw, Config, Softdevice,
-};
+use nrf_softdevice::Softdevice;
 
 // Crate
 use peripherals::{
@@ -47,14 +41,17 @@ use peripherals::{
     touch::{TouchController, TouchGesture},
     vibrator::Vibrator,
 };
-use system::bluetooth::{cts_get_epoch, BatteryServiceEvent, Bluetooth, Server, ServerEvent};
+use system::{
+    bluetooth::Bluetooth,
+    time::{TimeManager, TimeReference},
+};
 
 // Others
 use chrono::{NaiveDateTime, Timelike};
 
 // Communication channels
 static BATTERY_STATUS: Signal<ThreadModeRawMutex, (u8, bool)> = Signal::new();
-static CTS_TIME: Signal<ThreadModeRawMutex, NaiveDateTime> = Signal::new();
+static CTS_TIME: Signal<ThreadModeRawMutex, TimeReference> = Signal::new();
 static INCREASE_BRIGHTNESS: Signal<ThreadModeRawMutex, bool> = Signal::new();
 // static NOTIFY: Signal<ThreadModeRawMutex, u8> = Signal::new();
 static TIME: Signal<ThreadModeRawMutex, NaiveDateTime> = Signal::new();
@@ -63,9 +60,14 @@ static TOUCH_EVENT: Signal<ThreadModeRawMutex, TouchGesture> = Signal::new();
 /// BLE runner task
 #[embassy_executor::task(pool_size = 1)]
 async fn ble_runner(mut ble: Bluetooth) {
-    loop {
-        let e = ble.run_gatt().await;
+    // Start softdevice
+    unwrap!(Spawner::for_current_executor()
+        .await
+        .spawn(softdevice_task(ble.get_sd())));
 
+    // Run GATT Server
+    loop {
+        let e = ble.run_gatt_server(&CTS_TIME).await;
         defmt::info!(
             "gatt_server run exited with error: {:?}",
             defmt::Debug2Format(&e)
@@ -154,26 +156,16 @@ async fn update_lcd(mut display: Display<SPI2>) {
 
 /// Get the current time.
 #[embassy_executor::task(pool_size = 1)]
-async fn update_time() {
-    let mut ref_time = NaiveDateTime::UNIX_EPOCH;
-    let mut instant = Instant::now();
+async fn update_time(mut time_manager: TimeManager) {
     let mut tick = Ticker::every(Duration::from_secs(1));
     loop {
         // Update time from CTS
         if CTS_TIME.signaled() {
-            ref_time = CTS_TIME.wait().await;
-            instant = Instant::now();
+            time_manager.set_time(CTS_TIME.wait().await);
         }
 
-        // Calculate current time
-        let now = Instant::now();
-        let time = NaiveDateTime::from_timestamp_micros(
-            ref_time.timestamp_micros() + now.duration_since(instant).as_micros() as i64,
-        )
-        .unwrap();
-
-        // Send time to channel
-        TIME.signal(time);
+        // Send current time to channel
+        TIME.signal(time_manager.get_time());
 
         // Re-schedule the timer interrupt
         tick.next().await;
@@ -211,104 +203,6 @@ async fn softdevice_task(sd: &'static Softdevice) -> ! {
     sd.run().await
 }
 
-// #[embassy_executor::main]
-// async fn main(_spawner: Spawner) {
-//     // 0 is Highest. Lower priority number can preempt higher priority number
-//     // SoftDevice has reserved priorities 0 (default), 1, and 4
-//     let mut config = embassy_nrf::config::Config::default();
-//     config.gpiote_interrupt_priority = Priority::P2;
-//     config.time_interrupt_priority = Priority::P2;
-//     let mut p = embassy_nrf::init(config);
-//     defmt::info!("Initializing");
-
-//     // Initialize SAADC
-//     let mut saadc_config = saadc::Config::default();
-//     // Set resolution to 12bit, necessary for correct battery status calculation
-//     saadc_config.resolution = Resolution::_12BIT;
-//     // Pin P0.31: Voltage level
-//     let channel_config = ChannelConfig::single_ended(&mut p.P0_31);
-//     // Priority levels 0 (default), 1, and 4 are reserved for SoftDevice
-//     interrupt::SAADC.set_priority(interrupt::Priority::P3);
-
-//     let saadc = Saadc::new(p.SAADC, Irqs, saadc_config, [channel_config]);
-//     saadc.calibrate().await;
-
-//     // Initialize Backlight
-//     let mut backlight = Backlight::init(
-//         Output::new(p.P0_14, Level::High, OutputDrive::Standard),
-//         Output::new(p.P0_22, Level::High, OutputDrive::Standard),
-//         Output::new(p.P0_23, Level::High, OutputDrive::Standard),
-//         0,
-//     );
-
-//     // Initalize Battery
-//     let battery = Battery::init(saadc, Input::new(p.P0_12, Pull::None));
-
-//     // Initialize Button
-//     let button = Input::new(p.P0_13, Pull::None);
-//     let btn_enable = Output::new(p.P0_15, Level::Low, OutputDrive::Standard);
-
-//     // Initialize vibration motor
-//     let vibration = VibrationMotor::init(Output::new(p.P0_16, Level::High, OutputDrive::Standard));
-
-//     // Initialize Bluetooth
-//     let ble_config = generate_config().await;
-//     let sd = Softdevice::enable(&ble_config);
-//     let server = Server::new(sd).unwrap();
-
-//     // Initialize I2C
-//     let mut i2c_config = twim::Config::default();
-//     // Use I2C at 400KHz (the fastest clock available on the nRF52832),
-//     i2c_config.frequency = twim::Frequency::K400;
-//     // Priority levels 0 (default), 1, and 4 are reserved for SoftDevice
-//     interrupt::SPIM1_SPIS1_TWIM1_TWIS1_SPI1_TWI1.set_priority(interrupt::Priority::P3);
-
-//     let i2c = Twim::new(p.TWISPI1, Irqs, p.P0_06, p.P0_07, i2c_config);
-
-//     // Initialize SPI
-//     let mut spim_config = spim::Config::default();
-//     // Use SPI at 8MHz (the fastest clock available on the nRF52832),
-//     // otherwise refreshing will be super slow.
-//     spim_config.frequency = spim::Frequency::M8;
-//     // SPI must be used in mode 3. Mode 0 (the default) won't work.
-//     spim_config.mode = spim::MODE_3;
-//     // Priority levels 0 (default), 1, and 4 are reserved for SoftDevice
-//     interrupt::SPIM2_SPIS2_SPI2.set_priority(interrupt::Priority::P3);
-
-//     let spim = spim::Spim::new(p.SPI2, Irqs, p.P0_02, p.P0_04, p.P0_03, spim_config);
-
-//     // Initialize LCD
-//     let display = Display::init(
-//         spim,
-//         Output::new(p.P0_25, Level::Low, OutputDrive::Standard),
-//         Output::new(p.P0_18, Level::Low, OutputDrive::Standard),
-//         Output::new(p.P0_26, Level::Low, OutputDrive::Standard),
-//     );
-//     backlight.set(2).unwrap();
-
-//     // Initialize touch controller
-//     let touch = TouchController::new(
-//         i2c,
-//         Input::new(p.P0_28, Pull::Up), // Touchpad external interrupt pin: P0.28/AIN4 (TP_INT)
-//         Some(Output::new(p.P0_10, Level::High, OutputDrive::Standard)), // Touchpad reset pin: P0.10/NFC2 (TP_RESET)
-//     )
-//     .unwrap()
-//     .init(&mut Delay);
-
-//     defmt::info!("Initialization finished");
-
-//     // Schedule tasks
-//     unwrap!(_spawner.spawn(ble_runner(sd, server)));
-//     unwrap!(_spawner.spawn(poll_button(btn_enable, button)));
-//     unwrap!(_spawner.spawn(poll_touch(touch)));
-//     unwrap!(_spawner.spawn(softdevice_task(sd)));
-//     // unwrap!(_spawner.spawn(update_battery_status(battery)));
-//     unwrap!(_spawner.spawn(update_brightness(backlight)));
-//     unwrap!(_spawner.spawn(update_lcd(display)));
-//     unwrap!(_spawner.spawn(update_time()));
-//     unwrap!(_spawner.spawn(notify(vibration)));
-// }
-
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     let mut config = embassy_nrf::config::Config::default();
@@ -319,6 +213,9 @@ async fn main(_spawner: Spawner) {
     let mut p = embassy_nrf::init(config);
 
     defmt::info!("Initializing system ...");
+
+    // == Initialize Timekeeping ==
+    let time_manager = TimeManager::init();
 
     // == Initialize TWI/I2C ==
     let mut twi_config = twim::Config::default();
@@ -338,49 +235,7 @@ async fn main(_spawner: Spawner) {
     interrupt::SPIM2_SPIS2_SPI2.set_priority(interrupt::Priority::P3);
 
     // == Initialize Bluetooth ==
-    let device_name = "PineTime";
-    let sd_config = Config {
-        clock: Some(raw::nrf_clock_lf_cfg_t {
-            source: raw::NRF_CLOCK_LF_SRC_RC as u8,
-            rc_ctiv: 16,
-            rc_temp_ctiv: 2,
-            accuracy: raw::NRF_CLOCK_LF_ACCURACY_500_PPM as u8,
-        }),
-        conn_gap: Some(raw::ble_gap_conn_cfg_t {
-            conn_count: 6,
-            event_length: 24,
-        }),
-        conn_gatt: Some(raw::ble_gatt_conn_cfg_t { att_mtu: 256 }),
-        gatts_attr_tab_size: Some(raw::ble_gatts_cfg_attr_tab_size_t {
-            attr_tab_size: raw::BLE_GATTS_ATTR_TAB_SIZE_DEFAULT,
-        }),
-        gap_role_count: Some(raw::ble_gap_cfg_role_count_t {
-            adv_set_count: 1,
-            periph_role_count: 3,
-            central_role_count: 3,
-            central_sec_count: 0,
-            _bitfield_1: raw::ble_gap_cfg_role_count_t::new_bitfield_1(0),
-        }),
-        gap_device_name: Some(raw::ble_gap_cfg_device_name_t {
-            p_value: device_name.as_bytes().as_ptr() as _,
-            current_len: 9,
-            max_len: 9,
-            write_perm: unsafe { mem::zeroed() },
-            _bitfield_1: raw::ble_gap_cfg_device_name_t::new_bitfield_1(
-                raw::BLE_GATTS_VLOC_STACK as u8,
-            ),
-        }),
-        ..Default::default()
-    };
-    let sd = Softdevice::enable(&sd_config);
-    let server = Server::new(sd).unwrap();
-    let ble = Bluetooth::init(device_name, sd, server);
-    unwrap!(_spawner.spawn(softdevice_task(sd)));
-
-    // let ble = Bluetooth::init("PineTime");
-    // let ble_config = generate_config().await;
-    // let sd = Softdevice::enable(&ble_config);
-    // let server = Server::new(sd).unwrap();
+    let ble = Bluetooth::init("PineTime");
 
     defmt::info!("Initializing peripherals ...");
 
@@ -428,22 +283,10 @@ async fn main(_spawner: Spawner) {
 
     // Schedule tasks
     unwrap!(_spawner.spawn(ble_runner(ble)));
-    // unwrap!(_spawner.spawn(softdevice_task(&mut ble)));
     unwrap!(_spawner.spawn(poll_button(button)));
     unwrap!(_spawner.spawn(poll_touch(touch)));
     unwrap!(_spawner.spawn(update_battery_status(battery)));
     unwrap!(_spawner.spawn(update_lcd(display)));
-    unwrap!(_spawner.spawn(update_time()));
+    unwrap!(_spawner.spawn(update_time(time_manager)));
     // unwrap!(_spawner.spawn(notify(vibrator)));
 }
-
-// #[nrf_softdevice::gatt_server]
-// pub struct Server {
-//     pub bas: BatteryService,
-// }
-// struct BluetoothConfig {
-//     /// GATT Server
-//     server: Server,
-//     /// Softdevice
-//     sd: &'static Softdevice,
-// }
