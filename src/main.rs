@@ -10,7 +10,12 @@ use defmt::unwrap;
 use defmt_rtt as _;
 use panic_probe as _;
 
+// Core
+use core::cell::RefCell;
+use static_cell::StaticCell;
+
 // System
+use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_nrf::{
     bind_interrupts,
@@ -21,7 +26,10 @@ use embassy_nrf::{
     spim,
     twim::{self, Twim},
 };
-use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, signal::Signal};
+use embassy_sync::{
+    blocking_mutex::{raw::ThreadModeRawMutex, NoopMutex},
+    signal::Signal,
+};
 use embassy_time::{Duration, Ticker, Timer};
 
 bind_interrupts!(struct Irqs {
@@ -38,8 +46,9 @@ use peripherals::{
     battery::Battery,
     button::Button,
     display::{BacklightPins, Brightness, Display},
+    heartrate::HeartRateMonitor,
     touch::{TouchController, TouchGesture},
-    vibrator::Vibrator,
+    vibrator::{PulseLength, Vibrator},
 };
 use system::{
     bluetooth::Bluetooth,
@@ -49,11 +58,14 @@ use system::{
 // Others
 use chrono::{NaiveDateTime, Timelike};
 
+/// Shared I2C bus
+static I2C_BUS: StaticCell<NoopMutex<RefCell<Twim<TWISPI1>>>> = StaticCell::new();
+
 // Communication channels
 static BATTERY_STATUS: Signal<ThreadModeRawMutex, (u8, bool)> = Signal::new();
 static CTS_TIME: Signal<ThreadModeRawMutex, TimeReference> = Signal::new();
 static INCREASE_BRIGHTNESS: Signal<ThreadModeRawMutex, bool> = Signal::new();
-// static NOTIFY: Signal<ThreadModeRawMutex, u8> = Signal::new();
+static NOTIFY: Signal<ThreadModeRawMutex, u8> = Signal::new();
 static TIME: Signal<ThreadModeRawMutex, NaiveDateTime> = Signal::new();
 static TOUCH_EVENT: Signal<ThreadModeRawMutex, TouchGesture> = Signal::new();
 
@@ -81,23 +93,23 @@ async fn button_pressed() {
     INCREASE_BRIGHTNESS.signal(true);
 }
 
-// /// Check for notifications every 100ms
-// #[embassy_executor::task(pool_size = 1)]
-// async fn notify(mut vibrator: Vibrator) {
-//     loop {
-//         if NOTIFY.signaled() {
-//             // Vibrate signaled amount of times
-//             let count = NOTIFY.wait().await;
-//             match count {
-//                 1 => vibrator.pulse(PulseLength::SHORT, None).await,
-//                 _ => vibrator.pulse(PulseLength::SHORT, Some(count)).await,
-//             }
-//         }
+/// Check for notifications every 100ms
+#[embassy_executor::task(pool_size = 1)]
+async fn notify(mut vibrator: Vibrator) {
+    loop {
+        if NOTIFY.signaled() {
+            // Vibrate signaled amount of times
+            let count = NOTIFY.wait().await;
+            match count {
+                1 => vibrator.pulse(PulseLength::SHORT, None).await,
+                _ => vibrator.pulse(PulseLength::SHORT, Some(count)).await,
+            }
+        }
 
-//         // Re-schedule the timer interrupt in 100ms
-//         Timer::after(Duration::from_millis(100)).await;
-//     }
-// }
+        // Re-schedule the timer interrupt in 100ms
+        Timer::after(Duration::from_millis(100)).await;
+    }
+}
 
 /// Fetch the battery status from the hardware.
 #[embassy_executor::task(pool_size = 1)]
@@ -108,6 +120,28 @@ async fn update_battery_status(mut battery: Battery) {
 
         // Re-schedule the timer interrupt in 1s
         Timer::after(Duration::from_secs(1)).await;
+    }
+}
+
+/// Fetch the heart rate measurement from the hardware.
+#[embassy_executor::task(pool_size = 1)]
+async fn update_heart_rate(mut hrm: HeartRateMonitor<TWISPI1>) {
+    let mut tick = Ticker::every(Duration::from_millis(100));
+    let mut last_bpm = 0;
+    hrm.enable();
+
+    loop {
+        let heart_rate = hrm.start_measurement().await;
+
+        if let Some(hr) = heart_rate {
+            last_bpm = hr;
+            defmt::info!("Heart rate: {}", hr);
+        } else {
+            defmt::info!("Not enough data.");
+        }
+
+        // Re-schedule the timer interrupt in 100ms
+        tick.next().await;
     }
 }
 
@@ -154,7 +188,7 @@ async fn update_lcd(mut display: Display<SPI2>) {
     }
 }
 
-/// Get the current time.
+/// Update the current time.
 #[embassy_executor::task(pool_size = 1)]
 async fn update_time(mut time_manager: TimeManager) {
     let mut tick = Ticker::every(Duration::from_secs(1));
@@ -216,14 +250,17 @@ async fn main(_spawner: Spawner) {
 
     // == Initialize Timekeeping ==
     let time_manager = TimeManager::init();
+    unwrap!(_spawner.spawn(update_time(time_manager)));
 
-    // == Initialize TWI/I2C ==
+    // == Initialize I2C/TWI ==
     let mut twi_config = twim::Config::default();
     // Use TWI at 400KHz (fastest clock available on the nRF52832)
     twi_config.frequency = twim::Frequency::K400;
     // Priority levels 0 (default), 1, and 4 are reserved for SoftDevice
     interrupt::SPIM1_SPIS1_TWIM1_TWIS1_SPI1_TWI1.set_priority(interrupt::Priority::P3);
     let twi = Twim::new(p.TWISPI1, Irqs, p.P0_06, p.P0_07, twi_config);
+    let i2c_bus = NoopMutex::new(RefCell::new(twi));
+    let i2c_bus = I2C_BUS.init(i2c_bus);
 
     // Initialize SPI
     let mut spim_config = spim::Config::default();
@@ -236,6 +273,7 @@ async fn main(_spawner: Spawner) {
 
     // == Initialize Bluetooth ==
     let ble = Bluetooth::init("PineTime");
+    unwrap!(_spawner.spawn(ble_runner(ble)));
 
     defmt::info!("Initializing peripherals ...");
 
@@ -249,18 +287,28 @@ async fn main(_spawner: Spawner) {
     let adc = Saadc::new(p.SAADC, Irqs, adc_config, [channel_config]);
     adc.calibrate().await;
 
+    defmt::debug!("SAADC initialized.");
+
     // == Initialize Battery ==
     let charge_indicator = Input::new(p.P0_12, Pull::None);
     let battery = Battery::init(adc, charge_indicator);
+    unwrap!(_spawner.spawn(update_battery_status(battery)));
+
+    defmt::debug!("Battery initialized.");
 
     // == Initialize Button ==
     let button_pin = Input::new(p.P0_13, Pull::None);
     let enable_pin = Output::new(p.P0_15, Level::Low, OutputDrive::Standard);
     let button = Button::init(button_pin, enable_pin);
+    unwrap!(_spawner.spawn(poll_button(button)));
 
-    // == Initialize Vibrator ==
-    let enable_pin = Output::new(p.P0_16, Level::High, OutputDrive::Standard);
-    let _vibrator = Vibrator::init(enable_pin);
+    defmt::debug!("Button initialized.");
+
+    // // == Initialize Heart Rate Monitor ==
+    let hrm = HeartRateMonitor::init(I2cDevice::new(i2c_bus));
+    unwrap!(_spawner.spawn(update_heart_rate(hrm)));
+
+    defmt::debug!("Heart rate monitor initialized.");
 
     // == Initialize LCD ==
     let spim = spim::Spim::new(p.SPI2, Irqs, p.P0_02, p.P0_04, p.P0_03, spim_config);
@@ -273,20 +321,24 @@ async fn main(_spawner: Spawner) {
         Output::new(p.P0_23, Level::High, OutputDrive::Standard),
     );
     let display = Display::init(spim, cs_pin, dc_pin, reset_pin, backlight);
+    unwrap!(_spawner.spawn(update_lcd(display)));
+
+    defmt::debug!("Display initialized.");
 
     // == Initialize Touch Controller ==
     let interrupt_pin = Input::new(p.P0_28, Pull::Up);
     let reset_pin = Output::new(p.P0_10, Level::High, OutputDrive::Standard);
-    let touch = TouchController::init(twi, interrupt_pin, reset_pin);
+    let touch = TouchController::init(I2cDevice::new(i2c_bus), interrupt_pin, reset_pin);
+    unwrap!(_spawner.spawn(poll_touch(touch)));
+
+    defmt::debug!("Touch controller initialized.");
+
+    // == Initialize Vibrator ==
+    let enable_pin = Output::new(p.P0_16, Level::High, OutputDrive::Standard);
+    let vibrator = Vibrator::init(enable_pin);
+    unwrap!(_spawner.spawn(notify(vibrator)));
+
+    defmt::debug!("Vibrator initialized.");
 
     defmt::info!("Initialization finished");
-
-    // Schedule tasks
-    unwrap!(_spawner.spawn(ble_runner(ble)));
-    unwrap!(_spawner.spawn(poll_button(button)));
-    unwrap!(_spawner.spawn(poll_touch(touch)));
-    unwrap!(_spawner.spawn(update_battery_status(battery)));
-    unwrap!(_spawner.spawn(update_lcd(display)));
-    unwrap!(_spawner.spawn(update_time(time_manager)));
-    // unwrap!(_spawner.spawn(notify(vibrator)));
 }

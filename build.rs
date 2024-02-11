@@ -1,13 +1,7 @@
 //! This build script copies the `memory.x` file from the crate root into a directory where
 //! the linker can always find it at build time.
 
-use chrono;
-use std::{
-  env,
-  fs::File,
-  io::Write,
-  path::PathBuf,
-};
+use std::{env, fs::File, io::Write, path::PathBuf};
 
 fn main() {
     // Put memory layout in the output directory and ensure it's on the linker search path.
@@ -18,13 +12,7 @@ fn main() {
         .unwrap();
     println!("cargo:rustc-link-search={}", out.display());
 
-    // create rs file with current UTC time
-    File::create(out.join("utc.rs"))
-      .unwrap()
-      .write_fmt(format_args!("const UTC_EPOCH: i64 = {:?};", chrono::offset::Utc::now().timestamp()))
-      .unwrap();
-
     // By default, Cargo will re-run a build script whenever any file in the project changes.
-    // Specify `memory.x` here to ensure it is only re-run when `memory.x` is changed.
-    // println!("cargo:rerun-if-changed=memory.x");
+    // Specify `memory.x` here to ensure it is only re-run when this file has been changed.
+    println!("cargo:rerun-if-changed=memory.x");
 }

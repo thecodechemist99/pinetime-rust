@@ -727,6 +727,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hrs3300"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1f03d8191090c10964214c953d8e23692bcf729bdbbb5b3109417bc91617f61"
+dependencies = [
+ "embedded-hal 0.2.7",
+]
+
+[[package]]
 name = "iana-time-zone"
 version = "0.1.60"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -805,6 +814,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "523dc4f511e55ab87b694dc30d0f820d60906ef06413f93d4d7a1385599cc149"
 
 [[package]]
+name = "microfft"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "556b5d8420cb2e761b21eedb5cae7525bf6838144151a3bec546e9969162dadc"
+dependencies = [
+ "cfg-if",
+ "num-complex",
+ "static_assertions",
+]
+
+[[package]]
 name = "micromath"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -854,7 +874,7 @@ dependencies = [
  "futures",
  "heapless 0.8.0",
  "nrf-softdevice-macro",
- "nrf-softdevice-s132",
+ "nrf-softdevice-s113",
  "nrf52832-pac",
  "num_enum",
 ]
@@ -874,10 +894,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "nrf-softdevice-s132"
+name = "nrf-softdevice-s113"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9c4f582065c2adbfcfe8feb23ba32b12a599d9fffbf6da78fd5ae89763ae48b"
+checksum = "a31dd9e5c307932d1db1dea42642e161c8c9575cbe02d14de5a16b9691d76087"
 
 [[package]]
 name = "nrf52805-pac"
@@ -990,6 +1010,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-complex"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23c6602fda94a57c990fe0df199a035d83576b496aa29f4e634a8ac6004e68a6"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1058,6 +1087,7 @@ dependencies = [
  "defmt",
  "defmt-rtt",
  "display-interface-spi",
+ "embassy-embedded-hal",
  "embassy-executor",
  "embassy-nrf",
  "embassy-sync",
@@ -1065,11 +1095,21 @@ dependencies = [
  "embedded-graphics",
  "embedded-io",
  "format_no_std",
+ "hrs3300",
+ "microfft",
  "mipidsi",
  "nrf-softdevice",
+ "num-complex",
  "panic-probe",
  "profont",
+ "static_cell",
 ]
+
+[[package]]
+name = "portable-atomic"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7170ef9988bc169ba16dd36a7fa041e5c4cbeb6a35b76d4c03daded371eae7c0"
 
 [[package]]
 name = "proc-macro-error"
@@ -1216,6 +1256,21 @@ name = "stable_deref_trait"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
+
+[[package]]
+name = "static_assertions"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "static_cell"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa6ba4cf83bf80d3eb25f098ea5e790a0a1fcb5e357442259b231e412c2d3ca0"
+dependencies = [
+ "portable-atomic",
+]
 
 [[package]]
 name = "strsim"

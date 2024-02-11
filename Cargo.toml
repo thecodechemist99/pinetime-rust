@@ -11,27 +11,23 @@ chrono = "0.4.24"
 # Core dependencies
 cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7.3"
+static_cell = "2.0"
 
 # Embassy
+embassy-embedded-hal = "0.1"
 embassy-executor = { version = "0.5", features = ["defmt", "arch-cortex-m", "executor-thread", "integrated-timers"] }
 embassy-nrf = { version = "0.1", features = ["defmt", "nrf52832", "time-driver-rtc1", "gpiote", "unstable-pac", "time", "nfc-pins-as-gpio"] }
 embassy-sync = "0.5"
 embassy-time = { version = "0.3", features = ["defmt", "defmt-timestamp-uptime"] }
-# embassy-net = { git = "https://github.com/embassy-rs/embassy", dir = "tree/master/embassy-net", branch = "master", features = ["defmt", "tcp", "dhcpv4", "medium-ethernet"], optional = true }
 
-# Storage
-# embedded-storage = "0.3.0"
-
-# IO
+# IO and Peripherals
 debouncr = "0.2"
 embedded-io = "0.6"
+hrs3300 = "0.1"
 
 # Bluetooth
-# nrf-softdevice = "0.0.0"
-# rubble = { git = "https://github.com/thecodechemist99/rubble", dir = "tree/master/rubble"}
-# rubble-nrf5x = { git = "https://github.com/thecodechemist99/rubble", dir = "tree/master/rubble-nrf5x", features = ["52832"] }
 # Maybe switch to bleps in the future, but for now just take the easy route
-nrf-softdevice = { version = "0.1", features = ["ble-peripheral", "ble-gatt-server", "ble-gatt-client", "nrf52832", "s132"] }
+nrf-softdevice = { version = "0.1", features = ["ble-peripheral", "ble-gatt-server", "ble-gatt-client", "nrf52832", "s113"] }
 
 # Graphics
 chrono = { version = "0.4.24", default-features = false }
@@ -44,10 +40,14 @@ profont = "0.7"
 # Touch control
 cst816s = { version = "0.1", git = "https://github.com/thecodechemist99/cst816s" }
 
+# Math
+num-complex = { version = "0.4", default-features = false }
+microfft = { version = "0.5", features = ["size-64"] }
+
 # Debug probe
 defmt = "=0.3.2"
 defmt-rtt = "0.4"
-panic-probe = { version = "0.3", features = ["print-defmt"] }
+panic-probe = { version = "0.3", default-features = false, features = ["print-defmt"] }
 
 [profile.dev]
 opt-level = "z"
