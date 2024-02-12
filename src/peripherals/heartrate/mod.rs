@@ -49,44 +49,40 @@ where
             timer_index: 0,
         }
     }
-    #[allow(unused)]
     /// Start measurement
     pub async fn start_measurement(&mut self) -> Option<u8> {
-        // self.enable();
-        // self.config.ppg.reset();
-
         // Measure
         let ambient = self.config.ppg.preprocess(
             self.config.sensor.read_hrs().unwrap(),
             self.config.sensor.read_als().unwrap(),
         );
         let mut bpm = self.config.ppg.get_heart_rate();
-        // defmt::debug!("Ambient light detected: {}, BPM: {}", ambient, bpm);
 
-        // If ambient light detected or a reset requested (bpm < 0)
+        // If ambient light detected or a reset requested (bpm == None)
         if ambient {
             // Reset all DAQ buffers
-            self.config.ppg.reset();
+            self.config.ppg.reset(true);
             // Force state to None (not enough data)
             bpm = None;
+        } else if bpm == None {
+            // Reset all DAQ buffers except HRS buffer
+            self.config.ppg.reset(false);
         }
-
-        // Stop measurement
-        // self.disable();
-        // self.config.ppg.reset();
-
         bpm
     }
     /// Enable heart rate monitor
-    pub fn enable(&mut self) {
+    pub async fn enable(&mut self) {
         self.config.sensor.enable_hrs().unwrap();
         self.config.sensor.enable_oscillator().unwrap();
+        self.config.ppg.reset(true);
+        Timer::after_millis(100).await;
     }
     /// Disable heart rate monitor
-    pub fn disable(&mut self) {
+    pub async fn disable(&mut self) {
         self.config.sensor.disable_hrs().unwrap();
         self.config.sensor.disable_oscillator().unwrap();
-        self.config.ppg.reset();
+        self.config.ppg.reset(true);
+        Timer::after_millis(100).await;
     }
     #[allow(unused)]
     /// Read ambient light sensor

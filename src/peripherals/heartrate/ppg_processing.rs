@@ -2,8 +2,17 @@
 //!
 //! Implementation from https://github.com/InfiniTimeOrg/InfiniTime/blob/main/src/components/heartrate/Ppg.cpp
 
+use libm::{powf, sqrtf};
 use microfft::complex::cfft_64;
 use num_complex::Complex;
+
+// Source: https://github.com/kosme/arduinoFFT/blob/master/src/arduinoFFT.cpp
+fn complex_to_magnitude(v_complex: &mut [Complex<f32>]) {
+    // vM is half the size of vReal and vImag
+    for i in 0..v_complex.len() {
+        v_complex[i].re = sqrtf(powf(v_complex[i].re, 2.0) + powf(v_complex[i].im, 2.0));
+    }
+}
 
 fn linear_interpolation(x_vals: &[f32], y_vals: &[f32], point_x: f32) -> f32 {
     // Handle edge cases
@@ -43,16 +52,14 @@ fn peak_search(
     start: f32,
     end: f32,
 ) -> f32 {
-    let mut max_bin;
-    let mut min_bin = 0;
     let mut peaks = 0;
     let mut enabled = false;
+    let mut min_bin = 0;
+    let mut max_bin;
     let mut peak_center = 0.0;
     let mut prev_val = linear_interpolation(x_vals, y_vals, start - 0.01);
     let mut curr_val = linear_interpolation(x_vals, y_vals, start);
 
-    // defmt::debug!("x values: {}", x_vals);
-    // defmt::debug!("y values: {}", y_vals);
     for i in (start * 100.0) as u32..(end * 100.0) as u32 {
         let next_val = linear_interpolation(x_vals, y_vals, i as f32 * 0.01 + 0.01);
         if curr_val < threshold {
@@ -80,10 +87,10 @@ fn peak_search(
 
 fn spectrum_mean(signal: &[f32], start: usize, end: usize) -> f32 {
     let total = end - start;
-    if total > 0 {
-        return signal[start..end].iter().sum::<f32>() / total as f32;
+    match total > 0 {
+        true => signal[start..end].iter().sum::<f32>() / total as f32,
+        false => 0.0,
     }
-    0.0
 }
 
 fn signal_to_noise(signal: &[f32], start: usize, end: usize, max: f32) -> f32 {
@@ -96,18 +103,17 @@ fn filter_30_to_240(signal: &mut [f32]) {
     // From: https://www.norwegiancreations.com/2016/03/arduino-tutorial-simple-high-pass-band-pass-and-band-stop-filtering/
     let length = signal.len();
     // 0.268 is ~0.5Hz and 0.816 is ~4Hz cutoff at 10Hz sampling
-    let mut exp_avg: f32;
-    let mut exp_alpha = 0.816;
+    let exp_alpha = 0.816;
     for _ in 0..4 {
-        exp_avg = *signal.first().unwrap();
+        let mut exp_avg = signal[0];
         for i in 0..length {
             exp_avg = (exp_alpha * signal[i]) + ((1.0 - exp_alpha) * exp_avg);
             signal[i] = exp_avg;
         }
     }
-    exp_alpha = 0.268;
+    let exp_alpha = 0.268;
     for _ in 0..4 {
-        exp_avg = *signal.first().unwrap();
+        let mut exp_avg = signal[0];
         for i in 0..length {
             exp_avg = (exp_alpha * signal[i]) + ((1.0 - exp_alpha) * exp_avg);
             signal[i] -= exp_avg;
@@ -116,25 +122,22 @@ fn filter_30_to_240(signal: &mut [f32]) {
 }
 
 fn spectrum_max(data: &[f32], start: usize, end: usize) -> f32 {
-    let max = data[start..end].iter().max_by(|&a, &b| a.total_cmp(b));
-
-    match max {
+    match data[start..end].iter().max_by(|&a, &b| a.total_cmp(b)) {
         Some(val) => *val,
         None => 0.0,
     }
 }
 
 fn detrend(signal: &mut [f32]) {
-    let last_index = signal.len() - 1;
-    let offset = *signal.first().unwrap();
-    let slope = (signal.last().unwrap() - offset) / last_index as f32;
+    let length = signal.len();
+    let offset = signal[0];
+    let slope = (signal[length - 1] - offset) / (length - 1) as f32;
 
-    for (i, mut val) in signal.iter().enumerate().rev() {
-        let new_val = val - (slope * i as f32 + offset);
-        val = &new_val;
-        if i < last_index {
-            val = &(signal[i + 1] - val);
-        }
+    for i in 0..length {
+        signal[i] -= slope * i as f32 + offset;
+    }
+    for i in 0..(length - 1) {
+        signal[i] = signal[i + 1] - signal[i];
     }
 }
 
@@ -176,160 +179,6 @@ const HANNING: [f32; 32] = [
     0.99441541_f32,
     0.99937846_f32,
 ];
-
-// Ppg::Ppg() {
-//   dataAverage.fill(0.0f);
-//   spectrum.fill(0.0f);
-// }
-
-// int8_t Ppg::Preprocess(uint32_t hrs, uint32_t als) {
-//   if (dataIndex < dataLength) {
-//     dataHRS[dataIndex++] = hrs;
-//   }
-//   alsValue = als;
-//   if (alsValue > alsThreshold) {
-//     return 1;
-//   }
-//   return 0;
-// }
-
-// int Ppg::HeartRate() {
-//   if (dataIndex < dataLength) {
-//     return 0;
-//   }
-//   int hr = 0;
-//   hr = ProcessHeartRate(resetSpectralAvg);
-//   resetSpectralAvg = false;
-//   // Make room for overlapWindow number of new samples
-//   for (int idx = 0; idx < dataLength - overlapWindow; idx++) {
-//     dataHRS[idx] = dataHRS[idx + overlapWindow];
-//   }
-//   dataIndex = dataLength - overlapWindow;
-//   return hr;
-// }
-
-// void Ppg::Reset(bool resetDaqBuffer) {
-//   if (resetDaqBuffer) {
-//     dataIndex = 0;
-//   }
-//   avgIndex = 0;
-//   dataAverage.fill(0.0f);
-//   lastPeakLocation = 0.0f;
-//   alsThreshold = UINT16_MAX;
-//   alsValue = 0;
-//   resetSpectralAvg = true;
-//   spectrum.fill(0.0f);
-// }
-
-// // Pass init == true to reset spectral averaging.
-// // Returns -1 (Reset Acquisition), 0 (Unable to obtain HR) or HR (BPM).
-// int Ppg::ProcessHeartRate(bool init) {
-//   std::copy(dataHRS.begin(), dataHRS.end(), vReal.begin());
-//   Detrend(vReal);
-//   Filter30to240(vReal);
-//   vImag.fill(0.0f);
-//   // Apply Hanning Window
-//   int hannIdx = 0;
-//   for (int idx = 0; idx < dataLength; idx++) {
-//     if (idx >= dataLength >> 1) {
-//       hannIdx--;
-//     }
-//     vReal[idx] *= hanning[hannIdx];
-//     if (idx < dataLength >> 1) {
-//       hannIdx++;
-//     }
-//   }
-//   // Compute in place power spectrum
-//   ArduinoFFT<float> FFT = ArduinoFFT<float>(vReal.data(), vImag.data(), dataLength, sampleFreq);
-//   FFT.compute(FFTDirection::Forward);
-//   FFT.complexToMagnitude();
-//   FFT.~ArduinoFFT();
-//   SpectrumAverage(vReal.data(), spectrum.data(), spectrum.size(), init);
-//   peakLocation = 0.0f;
-//   float threshold = peakDetectionThreshold;
-//   float peakWidth = 0.0f;
-//   int specLen = spectrum.size();
-//   float max = SpectrumMax(spectrum, hrROIbegin, hrROIend);
-//   float signalToNoiseRatio = SignalToNoise(spectrum, hrROIbegin, hrROIend, max);
-//   if (signalToNoiseRatio > signalToNoiseThreshold && spectrum.at(0) < dcThreshold) {
-//     threshold *= max;
-//     // Reuse VImag for interpolation x values passed to PeakSearch
-//     for (int idx = 0; idx < dataLength; idx++) {
-//       vImag[idx] = idx;
-//     }
-//     peakLocation = PeakSearch(vImag.data(),
-//                               spectrum.data(),
-//                               threshold,
-//                               peakWidth,
-//                               static_cast<float>(hrROIbegin),
-//                               static_cast<float>(hrROIend),
-//                               specLen);
-//     peakLocation *= freqResolution;
-//   }
-//   // Peak too wide? (broad spectrum noise or large, rapid HR change)
-//   if (peakWidth > maxPeakWidth) {
-//     peakLocation = 0.0f;
-//   }
-//   // Check HR limits
-//   if (peakLocation < minHR || peakLocation > maxHR) {
-//     peakLocation = 0.0f;
-//   }
-//   // Reset spectral averaging if bad reading
-//   if (peakLocation == 0.0f) {
-//     resetSpectralAvg = true;
-//   }
-//   // Set the ambient light threshold and return HR in BPM
-//   alsThreshold = static_cast<uint16_t>(alsValue * alsFactor);
-//   // Get current average HR. If HR reduced to zero, return -1 (reset) else HR
-//   peakLocation = HeartRateAverage(peakLocation);
-//   int rtn = -1;
-//   if (peakLocation == 0.0f && lastPeakLocation > 0.0f) {
-//     lastPeakLocation = 0.0f;
-//   } else {
-//     lastPeakLocation = peakLocation;
-//     rtn = static_cast<int>((peakLocation * 60.0f) + 0.5f);
-//   }
-//   return rtn;
-// }
-
-// void Ppg::SpectrumAverage(const float* data, float* spectrum, int length, bool reset) {
-//   if (reset) {
-//     spectralAvgCount = 0;
-//   }
-//   float count = static_cast<float>(spectralAvgCount);
-//   for (int idx = 0; idx < length; idx++) {
-//     spectrum[idx] = (spectrum[idx] * count + data[idx]) / (count + 1);
-//   }
-//   if (spectralAvgCount < spectralAvgMax) {
-//     spectralAvgCount++;
-//   }
-// }
-
-// float Ppg::HeartRateAverage(float hr) {
-//   avgIndex++;
-//   avgIndex %= dataAverage.size();
-//   dataAverage[avgIndex] = hr;
-//   float avg = 0.0f;
-//   float total = 0.0f;
-//   float min = 300.0f;
-//   float max = 0.0f;
-//   for (const float& value : dataAverage) {
-//     if (value > 0.0f) {
-//       avg += value;
-//       if (value < min)
-//         min = value;
-//       if (value > max)
-//         max = value;
-//       total++;
-//     }
-//   }
-//   if (total > 0) {
-//     avg /= total;
-//   } else {
-//     avg = 0.0f;
-//   }
-//   return avg;
-// }
 
 #[allow(unused)]
 /// Photoplethysmogram
@@ -401,11 +250,11 @@ impl PPG {
     // Note: actual number of spectra averaged = spectralAvgMax + 1
     const SPECTRAL_AVG_MAX: u16 = 2;
     // Multiple Peaks above this threshold (% of max) are rejected
-    const PEAK_DETECTION_THRESHOLD: f32 = 0.6;
+    const PEAK_DETECTION_THRESHOLD: f32 = 0.7;
     // Maximum peak width (bins) at threshold for valid peak.
     const MAX_PEAK_WIDTH: f32 = 2.5;
     // Metric for spectrum noise level.
-    const SN_THRESHOLD: f32 = 3.0;
+    const SNR_THRESHOLD: f32 = 3.0;
     // Heart rate Region Of Interest begin (bins)
     const HR_ROI_BEGIN: f32 = ((30.0 / 60.0) / Self::FREQ_RES + 0.5);
     // Heart rate Region Of Interest end (bins)
@@ -417,7 +266,7 @@ impl PPG {
     // Threshold for high DC level after filtering
     const DC_THRESHOLD: f32 = 0.5;
     // ALS detection factor
-    const ALS_FACTOR: f32 = 2.0;
+    const ALS_FACTOR: u16 = 2;
 
     /// Create new PPG
     pub fn new() -> Self {
@@ -425,26 +274,21 @@ impl PPG {
     }
     /// Pre-process raw sensor data
     pub fn preprocess(&mut self, hrs: u32, als: u32) -> bool {
-        // defmt::debug!(
-        //     "HRS data: {}, ALS data: {}, ALS threshold: {} ",
-        //     hrs,
-        //     als,
-        //     self.als_threshold
-        // );
+        // Add data and increase index if index within DATA_LENGTH
         if self.data_index < Self::DATA_LENGTH {
             self.data_hrs[self.data_index] = hrs as u16;
             self.data_index += 1;
         }
+        // Save ALS value and check against threshold
         self.als_value = als as u16;
         self.als_value > self.als_threshold
     }
     /// Get heart rate
     pub fn get_heart_rate(&mut self) -> Option<u8> {
-        // Check if buffer is full
+        // Make sure that buffer is full before processing data
         if self.data_index < Self::DATA_LENGTH {
             return None;
         }
-        // defmt::debug!("HRS data: {}", self.data_hrs);
 
         // Calculate heart rate
         let hr = self.process_heart_rate(self.reset_spectral_avg);
@@ -454,11 +298,14 @@ impl PPG {
         self.data_hrs.rotate_left(Self::OVERLAP_WINDOW);
         self.data_index = Self::DATA_LENGTH - Self::OVERLAP_WINDOW;
 
+        // Return heart rate
         hr
     }
     /// Reset PPG
-    pub fn reset(&mut self) {
-        self.data_index = 0;
+    pub fn reset(&mut self, reset_daq_buf: bool) {
+        if reset_daq_buf {
+            self.data_index = 0;
+        }
         self.avg_index = 0;
         self.data_avg.fill(0.0);
         self.last_peak_location = 0.0;
@@ -468,41 +315,54 @@ impl PPG {
         self.spectrum.fill(0.0);
     }
     fn process_heart_rate(&mut self, init: bool) -> Option<u8> {
+        // Prepare datasets
         for i in 0..Self::DATA_LENGTH {
             self.v_real[i] = self.data_hrs[i] as f32;
         }
-        // defmt::debug!("Real numbers: {}", self.v_real);
-        detrend(&mut self.v_real);
-        filter_30_to_240(&mut self.v_real);
         self.v_imag.fill(0.0);
 
-        // Apply Hanning Window
-        for (i, mut val) in self.v_real.iter().enumerate() {
+        // Remove slope and DC offset from dataset
+        detrend(&mut self.v_real);
+        // Apply bandpass filter (30 to 240Hz) to remove low frequency noise
+        // and high frequency spikes from detrending step
+        filter_30_to_240(&mut self.v_real);
+
+        // Apply Hanning window (make signal seem continuous to fft)
+        for i in 0..Self::DATA_LENGTH {
             let mut i_hann = i;
             if i >= Self::DATA_LENGTH >> 1 {
-                i_hann = Self::DATA_LENGTH - (i + 1)
+                i_hann = Self::DATA_LENGTH - (i + 1);
             }
-            val = &(val * HANNING[i_hann]);
+            self.v_real[i] *= HANNING[i_hann];
         }
 
-        // Compute in place power spectrum
+        // Calculate FFT
         let mut v_complex = [Complex::new(0.0, 0.0); Self::DATA_LENGTH];
         for i in 0..Self::DATA_LENGTH {
             v_complex[i] = Complex::new(self.v_real[i], self.v_imag[i]);
         }
-        // defmt::debug!("Complex numbers: {}", defmt::Debug2Format(&v_complex));
         let spectrum = cfft_64(&mut v_complex);
+
+        // Calculate the power spectrum
+        complex_to_magnitude(spectrum);
+
+        // Write values from complex numbers back to their parts
+        for i in 0..Self::DATA_LENGTH {
+            self.v_real[i] = spectrum[i].re;
+            self.v_imag[i] = spectrum[i].im;
+        }
+
+        // Apply result to spectral average, to enhance the more frequently
+        // occurring heart rate frequency while diminishing random noise
         self.spectrum_avg(init);
-        // defmt::debug!("Averaged spectrum: {}", defmt::Debug2Format(&spectrum));
-        self.peak_location = 0.0;
-        let mut threshold = Self::PEAK_DETECTION_THRESHOLD;
-        let mut peak_width = 0.0_f32;
+
+        // Check the signal to noise ratio
         let max = spectrum_max(
             &self.spectrum,
             Self::HR_ROI_BEGIN as usize,
             Self::HR_ROI_END as usize,
         );
-        // defmt::debug!("Spectrum max: {}", max);
+
         let sn_ratio = signal_to_noise(
             &self.spectrum,
             Self::HR_ROI_BEGIN as usize,
@@ -510,9 +370,19 @@ impl PPG {
             max,
         );
         // defmt::debug!("Signal to noise ratio: {}", sn_ratio);
-        if sn_ratio > Self::SN_THRESHOLD && self.spectrum[0] < Self::DC_THRESHOLD {
+
+        // Search for peaks in the spectrum only if SNR is good.
+        // Look for peaks above threshold, if only one peak is above threshold,
+        // save the peak position to peak_location.
+        self.peak_location = 0.0;
+        let mut threshold = Self::PEAK_DETECTION_THRESHOLD;
+        let mut peak_width = 0.0_f32;
+
+        if sn_ratio > Self::SNR_THRESHOLD && self.spectrum[0] < Self::DC_THRESHOLD {
+            // defmt::debug!("SNR is good.");
             threshold *= max;
-            // Reuse imaginary parts for interpolation of x values passed to PeakSearch
+
+            // Reuse imaginary parts for interpolation of x values passed to peak_search
             for i in 0..Self::DATA_LENGTH {
                 self.v_imag[i] = i as f32;
             }
@@ -543,19 +413,23 @@ impl PPG {
             self.reset_spectral_avg = true;
         }
 
-        // Set the ambient light threshold and return HR in BPM
-        self.als_threshold = (self.als_value as f32 * Self::ALS_FACTOR) as u16;
+        // Update the ambient light threshold
+        self.als_threshold = self.als_value * Self::ALS_FACTOR;
 
-        // Get current average HR. If HR reduced to zero, return None (reset) else HR
+        // Get current HR average
         self.peak_location = self.heart_rate_avg(self.peak_location);
-        let mut rtn = None;
-        if self.peak_location == 0.0 && self.last_peak_location > 0.0 {
-            self.last_peak_location = 0.0;
-        } else {
-            self.last_peak_location = self.peak_location;
-            rtn = Some(((self.peak_location as f32 * 60.0) + 0.5) as u8);
+
+        // If HR reduced to zero, return None (reset) else HR
+        match self.peak_location == 0.0 && self.last_peak_location > 0.0 {
+            true => {
+                self.last_peak_location = 0.0;
+                None
+            }
+            false => {
+                self.last_peak_location = self.peak_location;
+                Some(((self.peak_location as f32 * 60.0) + 0.5) as u8)
+            }
         }
-        rtn
     }
 
     pub fn heart_rate_avg(&mut self, heart_rate: f32) -> f32 {
@@ -571,11 +445,13 @@ impl PPG {
                 total += 1;
             }
         }
-        if total > 0 {
-            return avg / total as f32;
+
+        match total > 0 {
+            true => avg / total as f32,
+            false => 0.0,
         }
-        0.0
     }
+
     fn spectrum_avg(&mut self, reset: bool) {
         if reset {
             self.spectral_avg_count = 0;

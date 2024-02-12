@@ -41,6 +41,7 @@ profont = "0.7"
 cst816s = { version = "0.1", git = "https://github.com/thecodechemist99/cst816s" }
 
 # Math
+libm = "0.2"
 num-complex = { version = "0.4", default-features = false }
 microfft = { version = "0.5", features = ["size-64"] }
 

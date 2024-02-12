@@ -128,8 +128,7 @@ async fn update_battery_status(mut battery: Battery) {
 async fn update_heart_rate(mut hrm: HeartRateMonitor<TWISPI1>) {
     let mut tick = Ticker::every(Duration::from_millis(100));
     let mut last_bpm = 0;
-    hrm.enable();
-
+    hrm.enable().await;
     loop {
         let heart_rate = hrm.start_measurement().await;
 
