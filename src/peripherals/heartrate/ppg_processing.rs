@@ -1,6 +1,7 @@
 //! Signal processing for heartrate
 //!
-//! Implementation from https://github.com/InfiniTimeOrg/InfiniTime/blob/main/src/components/heartrate/Ppg.cpp
+//! Implementation from https://github.com/InfiniTimeOrg/InfiniTime/blob/main/src/components/heartrate/Ppg.cpp.
+//! See also: https://github.com/InfiniTimeOrg/InfiniTime/pull/1486
 
 use libm::{powf, sqrtf};
 use microfft::complex::cfft_64;

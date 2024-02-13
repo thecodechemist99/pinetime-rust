@@ -43,6 +43,7 @@ use nrf_softdevice::Softdevice;
 
 // Crate
 use peripherals::{
+    accelerometer::Accelerometer,
     battery::Battery,
     button::Button,
     display::{BacklightPins, Brightness, Display},
@@ -275,6 +276,9 @@ async fn main(_spawner: Spawner) {
     unwrap!(_spawner.spawn(ble_runner(ble)));
 
     defmt::info!("Initializing peripherals ...");
+
+    // == Initialize Accelerometer ==
+    // let accelerometer = Accelerometer::init(I2cDevice::new(i2c_bus));
 
     // == Initalize ADC ==
     let mut adc_config = saadc::Config::default();

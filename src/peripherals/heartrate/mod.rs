@@ -5,6 +5,7 @@ mod ppg_processing;
 use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_nrf::twim::{self, Twim};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
 use hrs3300::Hrs3300;
 use ppg_processing::PPG;
 

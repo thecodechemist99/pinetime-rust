@@ -23,7 +23,6 @@ embassy-time = { version = "0.3", features = ["defmt", "defmt-timestamp-uptime"]
 # IO and Peripherals
 debouncr = "0.2"
 embedded-io = "0.6"
-hrs3300 = "0.1"
 
 # Bluetooth
 # Maybe switch to bleps in the future, but for now just take the easy route
@@ -39,6 +38,10 @@ profont = "0.7"
 
 # Touch control
 cst816s = { version = "0.1", git = "https://github.com/thecodechemist99/cst816s" }
+
+# Sensors
+hrs3300 = "0.1"
+bma423 = { version = "0.0.2", git = "https://github.com/thecodechemist99/bma423-rs" }
 
 # Math
 libm = "0.2"

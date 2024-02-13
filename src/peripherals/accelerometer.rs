@@ -1,26 +1,45 @@
 //! Accelerometer module for PineTime
 
-use crate::system::i2c::{Error, I2CPeripheral};
-use embassy_nrf::{
-    gpio::{Input, Output, Pin},
-    twim::{self, Twim},
-};
+use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
+use embassy_nrf::twim::{self, Twim};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_time::Delay;
+
+use bma423::{self, Bma423, FullPower};
 
 #[allow(unused)]
-pub struct Accelerometer {}
-
-impl<'a, I, IRQ, RST> I2CPeripheral<'a, I, IRQ, RST> for Accelerometer
+/// Accelerometer configuration
+struct AccelerometerConfig<'a, TWI>
 where
-    I: twim::Instance,
-    IRQ: Pin,
-    RST: Pin,
+    TWI: twim::Instance,
 {
-    #[allow(unused)]
-    fn new(
-        i2c: Twim<'a, I>,
-        interrupt_pin: Input<'a, IRQ>, // P0.08 : Interrupt
-        reset_pin: Option<Output<'a, RST>>,
-    ) -> Result<Self, Error> {
-        Ok(Self {})
+    /// Accelerometer sensor
+    sensor: Bma423<I2cDevice<'a, NoopRawMutex, Twim<'a, TWI>>, FullPower>,
+}
+
+#[allow(unused)]
+pub struct Accelerometer<TWI>
+where
+    TWI: twim::Instance,
+{
+    /// Accelerometer configuration
+    config: AccelerometerConfig<'static, TWI>,
+}
+
+impl<TWI> Accelerometer<TWI>
+where
+    TWI: twim::Instance,
+{
+    /// Configure accelerometer settings on boot
+    pub fn init(interface: I2cDevice<'static, NoopRawMutex, Twim<'static, TWI>>) -> Self {
+        let config = bma423::Config::default();
+        let sensor = Bma423::new(interface, config);
+        let mut delay = Delay;
+
+        Self {
+            config: AccelerometerConfig {
+                sensor: sensor.init(&mut delay).unwrap(),
+            },
+        }
     }
 }
