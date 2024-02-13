@@ -71,13 +71,13 @@ where
         bpm
     }
     /// Enable heart rate monitor
-    pub async fn enable(&mut self) {
+    pub fn enable(&mut self) {
         self.config.sensor.enable_hrs().unwrap();
         self.config.sensor.enable_oscillator().unwrap();
         self.config.ppg.reset(true);
     }
     /// Disable heart rate monitor
-    pub async fn disable(&mut self) {
+    pub fn disable(&mut self) {
         self.config.sensor.disable_hrs().unwrap();
         self.config.sensor.disable_oscillator().unwrap();
         self.config.ppg.reset(true);

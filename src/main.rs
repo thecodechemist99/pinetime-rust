@@ -129,16 +129,17 @@ async fn update_battery_status(mut battery: Battery) {
 async fn update_heart_rate(mut hrm: HeartRateMonitor<TWISPI1>) {
     let mut tick = Ticker::every(Duration::from_millis(100));
     let mut last_bpm = 0;
-    hrm.enable().await;
+    hrm.enable();
     loop {
         let heart_rate = hrm.start_measurement().await;
 
         if let Some(hr) = heart_rate {
             last_bpm = hr;
-            defmt::info!("Heart rate: {}", hr);
+            defmt::debug!("Heart rate: {}", hr);
         } else {
-            defmt::info!("Not enough data.");
+            defmt::debug!("Not enough data.");
         }
+        defmt::info!("Heart rate: {}", last_bpm);
 
         // Re-schedule the timer interrupt in 100ms
         tick.next().await;
