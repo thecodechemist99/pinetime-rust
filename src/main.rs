@@ -64,7 +64,9 @@ static I2C_BUS: StaticCell<NoopMutex<RefCell<Twim<TWISPI1>>>> = StaticCell::new(
 
 // Communication channels
 static BATTERY_STATUS: Signal<ThreadModeRawMutex, (u8, bool)> = Signal::new();
+static BAS_LEVEL: Signal<ThreadModeRawMutex, u8> = Signal::new();
 static CTS_TIME: Signal<ThreadModeRawMutex, TimeReference> = Signal::new();
+static HRS_MEASUREMENT: Signal<ThreadModeRawMutex, u8> = Signal::new();
 static INCREASE_BRIGHTNESS: Signal<ThreadModeRawMutex, bool> = Signal::new();
 static NOTIFY: Signal<ThreadModeRawMutex, u8> = Signal::new();
 static TIME: Signal<ThreadModeRawMutex, NaiveDateTime> = Signal::new();
@@ -80,11 +82,17 @@ async fn ble_runner(mut ble: Bluetooth) {
 
     // Run GATT Server
     loop {
-        let e = ble.run_gatt_server(&CTS_TIME).await;
-        defmt::info!(
-            "gatt_server run exited with error: {:?}",
-            defmt::Debug2Format(&e)
-        );
+        // Start server
+        if let Some(e) = ble
+            .run_gatt_server(&CTS_TIME, &BAS_LEVEL, &HRS_MEASUREMENT)
+            .await
+            .err()
+        {
+            defmt::info!(
+                "gatt_server run exited with error: {:?}",
+                defmt::Debug2Format(&e)
+            );
+        }
     }
 }
 
@@ -115,9 +123,18 @@ async fn notify(mut vibrator: Vibrator) {
 /// Fetch the battery status from the hardware.
 #[embassy_executor::task(pool_size = 1)]
 async fn update_battery_status(mut battery: Battery) {
+    let mut battery_level = 0;
     loop {
+        // Update battery status
         let status = (battery.get_percent().await, battery.is_charging());
         BATTERY_STATUS.signal(status);
+
+        // Update battery service if battery level changed
+        let (level, _) = status;
+        if battery_level != level {
+            battery_level = level;
+            BAS_LEVEL.signal(battery_level);
+        }
 
         // Re-schedule the timer interrupt in 1s
         Timer::after(Duration::from_secs(1)).await;
@@ -131,15 +148,19 @@ async fn update_heart_rate(mut hrm: HeartRateMonitor<TWISPI1>) {
     let mut last_bpm = 0;
     hrm.enable();
     loop {
+        // Measure heart rate
         let heart_rate = hrm.start_measurement().await;
 
         if let Some(hr) = heart_rate {
-            last_bpm = hr;
-            defmt::debug!("Heart rate: {}", hr);
+            // Update heart rate measurement service if heart rate changed
+            if last_bpm != hr {
+                last_bpm = hr;
+                HRS_MEASUREMENT.signal(hr);
+            }
+            defmt::info!("Heart rate: {}", last_bpm);
         } else {
             defmt::debug!("Not enough data.");
         }
-        defmt::info!("Heart rate: {}", last_bpm);
 
         // Re-schedule the timer interrupt in 100ms
         tick.next().await;
