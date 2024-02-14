@@ -211,6 +211,10 @@ async fn update_time(mut time_manager: TimeManager) {
 #[embassy_executor::task(pool_size = 1)]
 async fn poll_accelerometer(mut accelerometer: Accelerometer<TWISPI1>) {
     loop {
+        // Read from sensor
+        let (x, y, z) = accelerometer.get_acceleration_vector();
+        defmt::info!("Acceleration vector: ({}, {}, {})", x, y, z);
+
         // Re-schedule the timer interrupt in 10ms
         Timer::after(Duration::from_millis(10)).await;
     }

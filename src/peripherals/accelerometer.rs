@@ -65,4 +65,8 @@ where
             .set_accel_config(&mut delay, config)
             .unwrap();
     }
+    /// Read normalized data from accelerometer
+    pub fn get_acceleration_vector(&mut self) -> (f32, f32, f32) {
+        self.config.sensor.accel_norm_int().unwrap()
+    }
 }

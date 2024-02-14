@@ -35,21 +35,25 @@ This project sets out to add the following features to make a usable firmware ou
 - Firmware updates without needing access the debugging pins
 
 > **Warning**
-> Be aware that right now the project is still in a very early development state. Most of these features are not yet implemented.
+> Be aware that right now the project is still in a very early development state. Most of these features are not yet fully or at all implemented.
 
 ### Current state
 
 At the moment, the following features have been implemented (on top of the features from the original project):
 
-- A rudimentary UI showing the time and battery state
+- ~~A rudimentary UI showing the time and battery state~~
+  - This has been removed for now in preparation for a more useful UI interface
 - Control of the vibration motor (duration and vibration count can be set)
 - A very rudimentary battery percentage calculation (will be replaced with a better implementation at some point)
 - Basic touch detection
   - The driver crate used for this currently doesn’t support all touch gestures
-  - Currently, basic touch detection is implemented
+  - Currently, just basic touch detection is implemented
 - Bluetooth implementation
   - Battery service (does not yet display the actual battery state)
   - Fetch time from a current time service on a connected decive (e.g. smartphone)
+- Heart rate measurement with fairly accurate heart rate calculation
+- Accelerometer driver
+  - Currently only logs accelerometer vectors
 
 ## Development
 
