@@ -98,9 +98,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "bma423"
-version = "0.0.2"
-source = "git+https://github.com/thecodechemist99/bma423-rs#5ce3ec6d5159a2bae610835960f478e1ca096cef"
+name = "bma42x"
+version = "0.0.3"
+source = "git+https://github.com/thecodechemist99/bma423-rs?branch=bma42x-integration#33ae8c122c034cca579bc3f0f0a2c36275850aa5"
 dependencies = [
  "accelerometer",
  "bitmask-enum",
@@ -1154,7 +1154,7 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 name = "pinetime-rust"
 version = "0.1.0"
 dependencies = [
- "bma423",
+ "bma42x",
  "chrono",
  "cortex-m",
  "cortex-m-rt",

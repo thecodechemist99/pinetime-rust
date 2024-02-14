@@ -279,7 +279,7 @@ async fn main(_spawner: Spawner) {
     defmt::info!("Initializing peripherals ...");
 
     // == Initialize Accelerometer ==
-    // let accelerometer = Accelerometer::init(I2cDevice::new(i2c_bus));
+    let accelerometer = Accelerometer::init(I2cDevice::new(i2c_bus));
 
     // == Initalize ADC ==
     let mut adc_config = saadc::Config::default();

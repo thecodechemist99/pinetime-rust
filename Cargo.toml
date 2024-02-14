@@ -41,7 +41,7 @@ cst816s = { version = "0.1", git = "https://github.com/thecodechemist99/cst816s"
 
 # Sensors
 hrs3300 = "0.1"
-bma423 = { version = "0.0.2", git = "https://github.com/thecodechemist99/bma423-rs" }
+bma42x = { version = "0.0.3" , git = "https://github.com/thecodechemist99/bma423-rs", branch = "bma42x-integration", default-features = false, features = ["accel", "bma421"] }
 
 # Math
 libm = "0.2"
