@@ -6,7 +6,6 @@ use embassy_nrf::{
     spim::{self, Spim},
 };
 
-use chrono::{NaiveDateTime, Timelike};
 use display_interface_spi::SPIInterface;
 use embassy_time::Delay;
 use embedded_graphics::{

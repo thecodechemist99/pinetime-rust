@@ -207,6 +207,15 @@ async fn update_time(mut time_manager: TimeManager) {
     }
 }
 
+/// Poll the accelerometer state every 10ms
+#[embassy_executor::task(pool_size = 1)]
+async fn poll_accelerometer(mut accelerometer: Accelerometer<TWISPI1>) {
+    loop {
+        // Re-schedule the timer interrupt in 10ms
+        Timer::after(Duration::from_millis(10)).await;
+    }
+}
+
 /// Poll the button state every 10ms
 #[embassy_executor::task(pool_size = 1)]
 async fn poll_button(mut button: Button) {
@@ -253,15 +262,7 @@ async fn main(_spawner: Spawner) {
     let time_manager = TimeManager::init();
     unwrap!(_spawner.spawn(update_time(time_manager)));
 
-    // == Initialize I2C/TWI ==
-    let mut twi_config = twim::Config::default();
-    // Use TWI at 400KHz (fastest clock available on the nRF52832)
-    twi_config.frequency = twim::Frequency::K400;
-    // Priority levels 0 (default), 1, and 4 are reserved for SoftDevice
-    interrupt::SPIM1_SPIS1_TWIM1_TWIS1_SPI1_TWI1.set_priority(interrupt::Priority::P3);
-    let twi = Twim::new(p.TWISPI1, Irqs, p.P0_06, p.P0_07, twi_config);
-    let i2c_bus = NoopMutex::new(RefCell::new(twi));
-    let i2c_bus = I2C_BUS.init(i2c_bus);
+    defmt::debug!("Time manager initialized.");
 
     // Initialize SPI
     let mut spim_config = spim::Config::default();
@@ -272,14 +273,33 @@ async fn main(_spawner: Spawner) {
     // Priority levels 0 (default), 1, and 4 are reserved for SoftDevice
     interrupt::SPIM2_SPIS2_SPI2.set_priority(interrupt::Priority::P3);
 
-    // == Initialize Bluetooth ==
+    defmt::debug!("SPI initialized.");
+
+    // == Initialize TWI/I2C ==
+    let mut twi_config = twim::Config::default();
+    // Use TWI at 400KHz (fastest clock available on the nRF52832)
+    twi_config.frequency = twim::Frequency::K400;
+    // Priority levels 0 (default), 1, and 4 are reserved for SoftDevice
+    interrupt::SPIM1_SPIS1_TWIM1_TWIS1_SPI1_TWI1.set_priority(interrupt::Priority::P3);
+    let twi = Twim::new(p.TWISPI1, Irqs, p.P0_06, p.P0_07, twi_config);
+    let i2c_bus = NoopMutex::new(RefCell::new(twi));
+    let i2c_bus = I2C_BUS.init(i2c_bus);
+
+    defmt::debug!("TWI/I2C initialized.");
+
+    // == Initialize Bluetooth Low Energy ==
     let ble = Bluetooth::init("PineTime");
     unwrap!(_spawner.spawn(ble_runner(ble)));
+
+    defmt::debug!("BLE initialized.");
 
     defmt::info!("Initializing peripherals ...");
 
     // == Initialize Accelerometer ==
     let accelerometer = Accelerometer::init(I2cDevice::new(i2c_bus));
+    unwrap!(_spawner.spawn(poll_accelerometer(accelerometer)));
+
+    defmt::debug!("Accelerometer initialized.");
 
     // == Initalize ADC ==
     let mut adc_config = saadc::Config::default();

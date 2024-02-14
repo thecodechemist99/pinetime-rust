@@ -5,7 +5,9 @@ use embassy_nrf::twim::{self, Twim};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::Delay;
 
-use bma42x::{self, Bma421, FullPower};
+use bma42x::{
+    self, AccelConfigBandwidth, AccelConfigOdr, AccelConfigPerfMode, AccelRange, Bma421, FullPower,
+};
 
 #[allow(unused)]
 /// Accelerometer configuration
@@ -41,5 +43,26 @@ where
                 sensor: sensor.init(&mut delay).unwrap(),
             },
         }
+    }
+    /// Change accelerometer settings
+    #[allow(unused)]
+    pub fn update_conf(
+        &mut self,
+        bandwidth: AccelConfigBandwidth,
+        range: AccelRange,
+        performance_mode: AccelConfigPerfMode,
+        sample_rate: AccelConfigOdr,
+    ) {
+        let mut delay = Delay;
+        let config = bma42x::Config {
+            bandwidth,
+            range,
+            performance_mode,
+            sample_rate,
+        };
+        self.config
+            .sensor
+            .set_accel_config(&mut delay, config)
+            .unwrap();
     }
 }
