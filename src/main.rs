@@ -53,6 +53,7 @@ use peripherals::{
 };
 use system::{
     bluetooth::Bluetooth,
+    config::SystemConfig,
     time::{TimeManager, TimeReference},
 };
 
@@ -274,11 +275,7 @@ async fn softdevice_task(sd: &'static Softdevice) -> ! {
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
-    let mut config = embassy_nrf::config::Config::default();
-    // Configure interrupt priorities to exclude 0 (default), 1, and 4,
-    // which are reserved for the SoftDevice
-    config.gpiote_interrupt_priority = Priority::P2;
-    config.time_interrupt_priority = Priority::P2;
+    let config = SystemConfig::new();
     let mut p = embassy_nrf::init(config);
 
     defmt::info!("Initializing system ...");
