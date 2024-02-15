@@ -76,9 +76,10 @@ impl Bluetooth {
     pub fn init(device_name: &str) -> Self {
         let sd_config = Config {
             clock: Some(raw::nrf_clock_lf_cfg_t {
-                source: raw::NRF_CLOCK_LF_SRC_RC as u8,
-                rc_ctiv: 16,
-                rc_temp_ctiv: 2,
+                // Use external clock to reduce power consumption
+                source: raw::NRF_CLOCK_LF_SRC_XTAL as u8,
+                rc_ctiv: 0,
+                rc_temp_ctiv: 0,
                 accuracy: raw::NRF_CLOCK_LF_ACCURACY_500_PPM as u8,
             }),
             conn_gap: Some(raw::ble_gap_conn_cfg_t {
@@ -87,7 +88,8 @@ impl Bluetooth {
             }),
             conn_gatt: Some(raw::ble_gatt_conn_cfg_t { att_mtu: 256 }),
             gatts_attr_tab_size: Some(raw::ble_gatts_cfg_attr_tab_size_t {
-                attr_tab_size: raw::BLE_GATTS_ATTR_TAB_SIZE_DEFAULT,
+                // attr_tab_size: raw::BLE_GATTS_ATTR_TAB_SIZE_DEFAULT,
+                attr_tab_size: 336,
             }),
             gap_role_count: Some(raw::ble_gap_cfg_role_count_t {
                 adv_set_count: 1,

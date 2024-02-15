@@ -20,7 +20,7 @@ use embassy_executor::Spawner;
 use embassy_nrf::{
     bind_interrupts,
     gpio::{Input, Level, Output, OutputDrive, Pull},
-    interrupt::{self, InterruptExt, Priority},
+    interrupt::{self, InterruptExt},
     peripherals::{SPI2, TWISPI1},
     saadc::{self, ChannelConfig, Resolution, Saadc},
     spim,
