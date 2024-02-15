@@ -1,12 +1,14 @@
 //! Display control module for PineTime
 
+use embassy_embedded_hal::shared_bus::blocking::spi::SpiDevice;
 use embassy_nrf::{
     gpio::Output,
     peripherals::{P0_14, P0_18, P0_22, P0_23, P0_25, P0_26},
     spim::{self, Spim},
 };
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
-use display_interface_spi::SPIInterface;
+use display_interface_spi::{SPIInterface, SPIInterfaceNoCS};
 use embassy_time::Delay;
 use embedded_graphics::{
     mono_font::{iso_8859_1::FONT_10X20, MonoTextStyleBuilder},
@@ -192,7 +194,10 @@ where
 {
     /// Display instance
     display: mipidsi::Display<
-        SPIInterface<Spim<'a, SPI>, Output<'a, P0_18>, Output<'a, P0_25>>,
+        SPIInterfaceNoCS<
+            SpiDevice<'static, NoopRawMutex, Spim<'static, SPI>, Output<'static, P0_25>>,
+            Output<'a, P0_18>,
+        >,
         ST7789,
         Output<'a, P0_26>,
     >,
@@ -217,15 +222,14 @@ where
 {
     /// Configure display settings on boot
     pub fn init(
-        spim: Spim<'static, SPI>,
-        cs_pin: Output<'static, P0_25>,
+        spim: SpiDevice<'static, NoopRawMutex, Spim<'static, SPI>, Output<'static, P0_25>>,
         dc_pin: Output<'static, P0_18>,
         rst_pin: Output<'static, P0_26>,
         backlight: BacklightPins<'static>,
     ) -> Self {
         Self {
             config: DisplayConfig {
-                display: Builder::st7789(SPIInterface::new(spim, dc_pin, cs_pin))
+                display: Builder::st7789(SPIInterfaceNoCS::new(spim, dc_pin))
                     .with_display_size(LCD_W, LCD_H)
                     .with_orientation(Orientation::Portrait(false))
                     .init(&mut Delay, Some(rst_pin))

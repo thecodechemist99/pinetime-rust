@@ -15,7 +15,7 @@ use core::cell::RefCell;
 use static_cell::StaticCell;
 
 // System
-use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
+use embassy_embedded_hal::shared_bus::blocking::{i2c::I2cDevice, spi::SpiDevice};
 use embassy_executor::Spawner;
 use embassy_nrf::{
     bind_interrupts,
@@ -23,7 +23,7 @@ use embassy_nrf::{
     interrupt::{self, InterruptExt},
     peripherals::{SPI2, TWISPI1},
     saadc::{self, ChannelConfig, Resolution, Saadc},
-    spim,
+    spim::{self, Spim},
     twim::{self, Twim},
 };
 use embassy_sync::{
@@ -54,6 +54,7 @@ use peripherals::{
 use system::{
     bluetooth::Bluetooth,
     config::SystemConfig,
+    flash::Flash,
     time::{TimeManager, TimeReference},
 };
 
@@ -62,6 +63,8 @@ use chrono::{NaiveDateTime, Timelike};
 
 /// Shared I2C bus
 static I2C_BUS: StaticCell<NoopMutex<RefCell<Twim<TWISPI1>>>> = StaticCell::new();
+/// Shared SPI bus
+static SPI_BUS: StaticCell<NoopMutex<RefCell<Spim<SPI2>>>> = StaticCell::new();
 
 // Communication channels
 static BATTERY_STATUS: Signal<ThreadModeRawMutex, (u8, bool)> = Signal::new();
@@ -286,7 +289,7 @@ async fn main(_spawner: Spawner) {
 
     defmt::debug!("Time manager initialized.");
 
-    // Initialize SPI
+    // == Initialize SPI ==
     let mut spim_config = spim::Config::default();
     // Use SPI at 8MHz (fastest clock available on the nRF52832)
     spim_config.frequency = spim::Frequency::M8;
@@ -294,6 +297,9 @@ async fn main(_spawner: Spawner) {
     spim_config.mode = spim::MODE_3;
     // Priority levels 0 (default), 1, and 4 are reserved for SoftDevice
     interrupt::SPIM2_SPIS2_SPI2.set_priority(interrupt::Priority::P3);
+    let spi = Spim::new(p.SPI2, Irqs, p.P0_02, p.P0_04, p.P0_03, spim_config);
+    let spi_bus = NoopMutex::new(RefCell::new(spi));
+    let spi_bus = SPI_BUS.init(spi_bus);
 
     defmt::debug!("SPI initialized.");
 
@@ -308,6 +314,12 @@ async fn main(_spawner: Spawner) {
     let i2c_bus = I2C_BUS.init(i2c_bus);
 
     defmt::debug!("TWI/I2C initialized.");
+
+    // == Initialize Flash ==
+    let cs_pin = Output::new(p.P0_05, Level::Low, OutputDrive::Standard);
+    let flash = Flash::init(SpiDevice::new(spi_bus, cs_pin));
+
+    defmt::debug!("BLE initialized.");
 
     // == Initialize Bluetooth Low Energy ==
     let ble = Bluetooth::init("PineTime");
@@ -357,7 +369,6 @@ async fn main(_spawner: Spawner) {
     defmt::debug!("Heart rate monitor initialized.");
 
     // == Initialize LCD ==
-    let spim = spim::Spim::new(p.SPI2, Irqs, p.P0_02, p.P0_04, p.P0_03, spim_config);
     let cs_pin = Output::new(p.P0_25, Level::Low, OutputDrive::Standard);
     let dc_pin = Output::new(p.P0_18, Level::Low, OutputDrive::Standard);
     let reset_pin = Output::new(p.P0_26, Level::Low, OutputDrive::Standard);
@@ -366,7 +377,12 @@ async fn main(_spawner: Spawner) {
         Output::new(p.P0_22, Level::High, OutputDrive::Standard),
         Output::new(p.P0_23, Level::High, OutputDrive::Standard),
     );
-    let display = Display::init(spim, cs_pin, dc_pin, reset_pin, backlight);
+    let display = Display::init(
+        SpiDevice::new(spi_bus, cs_pin),
+        dc_pin,
+        reset_pin,
+        backlight,
+    );
     unwrap!(_spawner.spawn(update_lcd(display)));
 
     defmt::debug!("Display initialized.");
