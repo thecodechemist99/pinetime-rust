@@ -1,5 +1,6 @@
 //! SPI flash module
 
+use cortex_m::prelude::_embedded_hal_blocking_spi_Write;
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDevice;
 use embassy_nrf::{
     gpio::Output,
@@ -37,5 +38,10 @@ where
         Self {
             config: FlashConfig { interface: spim },
         }
+    }
+    /// Enable deep power down state
+    pub fn into_deep_power_down(&mut self) {
+        // Set CS high, then low, then write 0xb9 on the SPI bus, then set cs high again
+        self.config.interface.write(&[0xb9]).unwrap();
     }
 }

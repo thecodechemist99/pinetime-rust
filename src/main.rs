@@ -316,10 +316,12 @@ async fn main(_spawner: Spawner) {
     defmt::debug!("TWI/I2C initialized.");
 
     // == Initialize Flash ==
-    let cs_pin = Output::new(p.P0_05, Level::Low, OutputDrive::Standard);
-    let flash = Flash::init(SpiDevice::new(spi_bus, cs_pin));
+    let cs_pin = Output::new(p.P0_05, Level::High, OutputDrive::Standard);
+    let mut flash = Flash::init(SpiDevice::new(spi_bus, cs_pin));
+    // Put flash in deep power down mode to reduce power consumption
+    flash.into_deep_power_down();
 
-    defmt::debug!("BLE initialized.");
+    defmt::debug!("Flash initialized.");
 
     // == Initialize Bluetooth Low Energy ==
     let ble = Bluetooth::init("PineTime");
@@ -369,7 +371,7 @@ async fn main(_spawner: Spawner) {
     defmt::debug!("Heart rate monitor initialized.");
 
     // == Initialize LCD ==
-    let cs_pin = Output::new(p.P0_25, Level::Low, OutputDrive::Standard);
+    let cs_pin = Output::new(p.P0_25, Level::High, OutputDrive::Standard);
     let dc_pin = Output::new(p.P0_18, Level::Low, OutputDrive::Standard);
     let reset_pin = Output::new(p.P0_26, Level::Low, OutputDrive::Standard);
     let backlight = BacklightPins::init(
