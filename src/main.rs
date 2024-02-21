@@ -48,13 +48,13 @@ use peripherals::{
     button::Button,
     display::{BacklightPins, Brightness, Display},
     heartrate::HeartRateMonitor,
+    spi_flash::Flash,
     touch::{TouchController, TouchGesture},
     vibrator::{PulseLength, Vibrator},
 };
 use system::{
     bluetooth::Bluetooth,
     config::SystemConfig,
-    flash::Flash,
     time::{TimeManager, TimeReference},
 };
 
