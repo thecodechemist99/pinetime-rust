@@ -100,12 +100,6 @@ async fn ble_runner(mut ble: Bluetooth) {
     }
 }
 
-/// Called when button is pressed without bouncing for 10 (5 * 2) ms.
-#[embassy_executor::task(pool_size = 1)]
-async fn button_pressed() {
-    INCREASE_BRIGHTNESS.signal(true);
-}
-
 /// Check for notifications every 100ms
 #[embassy_executor::task(pool_size = 1)]
 async fn notify(mut vibrator: Vibrator) {
@@ -173,19 +167,22 @@ async fn update_heart_rate(mut hrm: HeartRateMonitor<TWISPI1>) {
 
 #[embassy_executor::task(pool_size = 1)]
 async fn update_lcd(mut display: Display<SPI2>) {
-    let mut tick = Ticker::every(Duration::from_secs(1));
+    // TODO: Tick necessary or is wait at a higher rate just fine?
+    let mut tick = Ticker::every(Duration::from_millis(100));
     loop {
         if INCREASE_BRIGHTNESS.signaled() {
-            display.set_brightness(match display.get_brightness() {
-                Brightness::LEVEL0 => Brightness::LEVEL1,
-                Brightness::LEVEL1 => Brightness::LEVEL2,
-                Brightness::LEVEL2 => Brightness::LEVEL3,
-                Brightness::LEVEL3 => Brightness::LEVEL4,
-                Brightness::LEVEL4 => Brightness::LEVEL5,
-                Brightness::LEVEL5 => Brightness::LEVEL6,
-                Brightness::LEVEL6 => Brightness::LEVEL7,
-                Brightness::LEVEL7 => Brightness::LEVEL0,
-            });
+            if INCREASE_BRIGHTNESS.wait().await {
+                display.set_brightness(match display.get_brightness() {
+                    Brightness::LEVEL0 => Brightness::LEVEL1,
+                    Brightness::LEVEL1 => Brightness::LEVEL2,
+                    Brightness::LEVEL2 => Brightness::LEVEL3,
+                    Brightness::LEVEL3 => Brightness::LEVEL4,
+                    Brightness::LEVEL4 => Brightness::LEVEL5,
+                    Brightness::LEVEL5 => Brightness::LEVEL6,
+                    Brightness::LEVEL6 => Brightness::LEVEL7,
+                    Brightness::LEVEL7 => Brightness::LEVEL0,
+                });
+            }
         }
 
         if BATTERY_STATUS.signaled() {
@@ -249,7 +246,11 @@ async fn poll_accelerometer(mut accelerometer: Accelerometer<TWISPI1>) {
 #[embassy_executor::task(pool_size = 1)]
 async fn poll_button(mut button: Button) {
     loop {
-        INCREASE_BRIGHTNESS.signal(button.pressed().await);
+        let pressed = button.pressed().await;
+        if pressed {
+            defmt::debug!("Button has been pressed.");
+            INCREASE_BRIGHTNESS.signal(pressed);
+        }
 
         // Re-schedule the timer interrupt in 10ms
         Timer::after(Duration::from_millis(10)).await;
@@ -315,14 +316,6 @@ async fn main(_spawner: Spawner) {
 
     defmt::debug!("TWI/I2C initialized.");
 
-    // == Initialize Flash ==
-    let cs_pin = Output::new(p.P0_05, Level::High, OutputDrive::Standard);
-    let mut flash = Flash::init(SpiDevice::new(spi_bus, cs_pin));
-    // Put flash in deep power down mode to reduce power consumption
-    flash.into_deep_power_down();
-
-    defmt::debug!("Flash initialized.");
-
     // == Initialize Bluetooth Low Energy ==
     let ble = Bluetooth::init("PineTime");
     unwrap!(_spawner.spawn(ble_runner(ble)));
@@ -350,21 +343,21 @@ async fn main(_spawner: Spawner) {
     defmt::debug!("SAADC initialized.");
 
     // == Initialize Battery ==
-    let charge_indicator = Input::new(p.P0_12, Pull::None);
+    let charge_indicator = Input::new(p.P0_12, Pull::Up);
     let battery = Battery::init(adc, charge_indicator);
     unwrap!(_spawner.spawn(update_battery_status(battery)));
 
     defmt::debug!("Battery initialized.");
 
     // == Initialize Button ==
-    let button_pin = Input::new(p.P0_13, Pull::None);
-    let enable_pin = Output::new(p.P0_15, Level::Low, OutputDrive::Standard);
-    let button = Button::init(button_pin, enable_pin);
+    let button_in_pin = Input::new(p.P0_13, Pull::Down);
+    let button_out_pin = Output::new(p.P0_15, Level::Low, OutputDrive::Standard);
+    let button = Button::init(button_in_pin, button_out_pin);
     unwrap!(_spawner.spawn(poll_button(button)));
 
     defmt::debug!("Button initialized.");
 
-    // // == Initialize Heart Rate Monitor ==
+    // == Initialize Heart Rate Monitor ==
     let hrm = HeartRateMonitor::init(I2cDevice::new(i2c_bus));
     unwrap!(_spawner.spawn(update_heart_rate(hrm)));
 
@@ -388,6 +381,15 @@ async fn main(_spawner: Spawner) {
     unwrap!(_spawner.spawn(update_lcd(display)));
 
     defmt::debug!("Display initialized.");
+
+    // == Initialize SPI Flash ==
+    let cs_pin = Output::new(p.P0_05, Level::High, OutputDrive::Standard);
+    let mut flash = Flash::init(SpiDevice::new(spi_bus, cs_pin));
+    // Put flash in deep power down mode to reduce power consumption
+    defmt::debug!("Device ID: {}", flash.read_id());
+    flash.into_power_down().await;
+
+    defmt::debug!("SPI flash initialized.");
 
     // == Initialize Touch Controller ==
     let interrupt_pin = Input::new(p.P0_28, Pull::Up);

@@ -8,22 +8,11 @@ use embassy_nrf::{
 };
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
-use display_interface_spi::{SPIInterface, SPIInterfaceNoCS};
+use display_interface_spi::SPIInterfaceNoCS;
 use embassy_time::Delay;
-use embedded_graphics::{
-    mono_font::{iso_8859_1::FONT_10X20, MonoTextStyleBuilder},
-    pixelcolor::Rgb565,
-    prelude::*,
-    primitives::{Ellipse, PrimitiveStyle, PrimitiveStyleBuilder},
-    text::Text,
-};
+use embedded_canvas::CCanvas;
+use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
 use mipidsi::{models::ST7789, Builder, Orientation};
-use profont::PROFONT_24_POINT;
-
-// const LCD_W: u16 = 240;
-// const LCD_H: u16 = 240;
-
-// const MARGIN: u16 = 20;
 
 // const BACKGROUND_COLOR: Rgb565 = Rgb565::new(0, 0, 0);
 
@@ -154,8 +143,8 @@ use profont::PROFONT_24_POINT;
 
 // =============================================
 
-const LCD_W: u16 = 240;
-const LCD_H: u16 = 240;
+const LCD_W: usize = 240;
+const LCD_H: usize = 240;
 
 #[allow(unused)]
 #[derive(Clone, Copy)]
@@ -170,6 +159,17 @@ pub enum Brightness {
     LEVEL7 = 7,
 }
 
+/// Control the backlight.
+///
+/// There are three active-low backlight pins, each connected to a FET that
+/// toggles backlight power through a resistor.
+///
+/// - Low: 2.2 kΩ
+/// - Mid: 100 Ω
+/// - High: 30 Ω
+///
+/// Through combinations of these pins, 7 brightness levels (plus off) can be
+/// configured.
 pub struct BacklightPins<'a> {
     low: Output<'a, P0_14>,
     mid: Output<'a, P0_22>,
@@ -184,6 +184,24 @@ impl BacklightPins<'_> {
         high: Output<'static, P0_23>,
     ) -> Self {
         Self { low, mid, high }
+    }
+    /// Set brightness between 0 (off) and 7 (max brightness)
+    fn set(&mut self, brightness: u8) {
+        if brightness & 0x01 > 0 {
+            self.low.set_low();
+        } else {
+            self.low.set_high();
+        }
+        if brightness & 0x02 > 0 {
+            self.mid.set_low();
+        } else {
+            self.mid.set_high();
+        }
+        if brightness & 0x04 > 0 {
+            self.high.set_low();
+        } else {
+            self.high.set_high();
+        }
     }
 }
 
@@ -201,8 +219,8 @@ where
         ST7789,
         Output<'a, P0_26>,
     >,
-    // Backlight pins
-    pins_backlight: BacklightPins<'a>,
+    /// Backlight pins
+    backlight: BacklightPins<'a>,
 }
 
 #[allow(unused)]
@@ -230,11 +248,11 @@ where
         Self {
             config: DisplayConfig {
                 display: Builder::st7789(SPIInterfaceNoCS::new(spim, dc_pin))
-                    .with_display_size(LCD_W, LCD_H)
+                    .with_display_size(LCD_W as u16, LCD_H as u16)
                     .with_orientation(Orientation::Portrait(false))
                     .init(&mut Delay, Some(rst_pin))
                     .unwrap(),
-                pins_backlight: BacklightPins {
+                backlight: BacklightPins {
                     low: backlight.low,
                     mid: backlight.mid,
                     high: backlight.high,
@@ -248,7 +266,6 @@ where
     pub fn clear(&mut self, color: Rgb565) -> Result<(), mipidsi::Error> {
         self.config.display.clear(color)
     }
-
     /// Brightness of the display backlight
     pub fn get_brightness(&self) -> Brightness {
         self.brightness
@@ -256,5 +273,13 @@ where
     /// Set the backlight brightness
     pub fn set_brightness(&mut self, level: Brightness) {
         self.brightness = level;
+        self.config.backlight.set(level as u8)
+    }
+    /// Update the display contents
+    pub fn update(&mut self, canvas: CCanvas<Rgb565, LCD_W, LCD_H>) {
+        canvas
+            .place_at(Point::zero())
+            .draw(&mut self.config.display)
+            .unwrap();
     }
 }
