@@ -1169,6 +1169,7 @@ dependencies = [
  "embassy-sync",
  "embassy-time",
  "embedded-graphics",
+ "embedded-hal 1.0.0",
  "embedded-io",
  "format_no_std",
  "futures",
