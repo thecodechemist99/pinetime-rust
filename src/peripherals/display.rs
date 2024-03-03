@@ -11,8 +11,10 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use display_interface_spi::SPIInterfaceNoCS;
 use embassy_time::Delay;
 use embedded_canvas::CCanvas;
-use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
+use embedded_graphics::prelude::*;
 use mipidsi::{models::ST7789, Builder, Orientation};
+
+pub use embedded_graphics::pixelcolor::Rgb565 as ColorMode;
 
 // const BACKGROUND_COLOR: Rgb565 = Rgb565::new(0, 0, 0);
 
@@ -143,8 +145,8 @@ use mipidsi::{models::ST7789, Builder, Orientation};
 
 // =============================================
 
-const LCD_W: usize = 240;
-const LCD_H: usize = 240;
+pub const LCD_W: usize = 240;
+pub const LCD_H: usize = 240;
 
 #[allow(unused)]
 #[derive(Clone, Copy)]
@@ -263,7 +265,7 @@ where
     }
     #[allow(unused)]
     /// Clear the display
-    pub fn clear(&mut self, color: Rgb565) -> Result<(), mipidsi::Error> {
+    pub fn clear(&mut self, color: ColorMode) -> Result<(), mipidsi::Error> {
         self.config.display.clear(color)
     }
     /// Brightness of the display backlight
@@ -276,7 +278,7 @@ where
         self.config.backlight.set(level as u8)
     }
     /// Update the display contents
-    pub fn update(&mut self, canvas: CCanvas<Rgb565, LCD_W, LCD_H>) {
+    pub fn update(&mut self, canvas: CCanvas<ColorMode, LCD_W, LCD_H>) {
         canvas
             .place_at(Point::zero())
             .draw(&mut self.config.display)

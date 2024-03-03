@@ -3,6 +3,7 @@
 
 mod peripherals;
 mod system;
+mod ui;
 
 // Panic handler and debugging
 use defmt::unwrap;
