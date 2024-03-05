@@ -1,19 +1,18 @@
 //! Default watchface
 
 use chrono::{Datelike, Timelike};
-use embedded_canvas::CCanvas;
 use embedded_graphics::{
     geometry::{Point, Size},
     mono_font::{ascii::FONT_6X10, MonoTextStyle},
     pixelcolor::RgbColor,
     primitives::Rectangle,
     text::renderer::TextRenderer,
+    Drawable,
 };
 use embedded_text::{alignment::HorizontalAlignment, style::TextBoxStyleBuilder, TextBox};
 use format_no_std;
 
-use super::{WatchFace, WatchFaceState};
-use crate::peripherals::display::{ColorMode, LCD_H, LCD_W};
+use super::{CCanvas, ColorMode, WatchFace, WatchFaceState, LCD_H, LCD_W};
 
 const BUF_LEN: usize = 64;
 
@@ -46,8 +45,6 @@ pub struct DefaultWatchface<'a> {
     pub date_label: Label<'a, MonoTextStyle<'a, ColorMode>>,
     /// Power indicator label
     pub power_label: Label<'a, MonoTextStyle<'a, ColorMode>>,
-    /// Screen canvas
-    canvas: CCanvas<ColorMode, LCD_W, LCD_H>,
 }
 
 impl<'a> WatchFace<'a> for DefaultWatchface<'a> {
@@ -112,17 +109,18 @@ impl<'a> WatchFace<'a> for DefaultWatchface<'a> {
                     textbox_style,
                 ))
             },
-            canvas,
         }
     }
 
-    fn update(&'a mut self, state: WatchFaceState) {
+    fn update(&'a mut self, state: WatchFaceState) -> CCanvas<ColorMode, LCD_W, LCD_H> {
         // Update time label
         self.time_label.text_box.text = format_no_std::show(
             &mut self.time_label.str_buf,
             format_args!("{}:{}", state.time.hour(), state.time.minute()),
         )
         .unwrap();
+
+        // Update date label
         self.date_label.text_box.text = format_no_std::show(
             &mut self.date_label.str_buf,
             format_args!(
@@ -148,10 +146,20 @@ impl<'a> WatchFace<'a> for DefaultWatchface<'a> {
             ),
         )
         .unwrap();
+
+        // Update power label
         self.power_label.text_box.text = format_no_std::show(
             &mut self.power_label.str_buf,
             format_args!("{}%", state.percent),
         )
         .unwrap();
+
+        // Draw to canvas
+        let mut canvas: CCanvas<ColorMode, LCD_W, LCD_H> = CCanvas::new();
+        self.time_label.text_box.draw(&mut canvas).unwrap();
+        self.date_label.text_box.draw(&mut canvas).unwrap();
+        self.power_label.text_box.draw(&mut canvas).unwrap();
+
+        canvas
     }
 }
