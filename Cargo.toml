@@ -4,9 +4,6 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
-[build-dependencies]
-chrono = "0.4.24"
-
 [dependencies]
 # Core dependencies
 cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
@@ -33,7 +30,6 @@ embedded-canvas = { version = "0.3", default-features = false, features = ["tran
 embedded-graphics = "0.8"
 embedded-layout = "0.4"
 embedded-text = "0.7"
-format_no_std = "1.0.0"
 mipidsi = "0.7"
 profont = "0.7"
 
@@ -43,12 +39,13 @@ embedded-io = "0.6"
 
 # Math
 libm = "0.2"
-num-complex = { version = "0.4", default-features = false }
 microfft = { version = "0.5", features = ["size-64"] }
+# numtoa = "0.2"
+num-complex = { version = "0.4", default-features = false }
 
 # Sensors
-hrs3300 = "0.1"
 bma42x = { version = "0.0.3" , git = "https://github.com/thecodechemist99/bma423-rs", branch = "bma42x-integration", default-features = false, features = ["accel", "bma421"] }
+hrs3300 = "0.1"
 
 # Touch control
 cst816s = { version = "0.1", git = "https://github.com/thecodechemist99/cst816s" }
@@ -67,5 +64,5 @@ debug = 2
 opt-level = "z"
 codegen-units = 1
 lto = true
-strip = false
-panic = 'abort'
+strip = true
+panic = "abort"
