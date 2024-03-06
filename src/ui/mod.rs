@@ -4,7 +4,7 @@
 use chrono::NaiveDateTime;
 use embedded_canvas::CCanvas;
 
-use crate::peripherals::display::{ColorMode, LCD_H, LCD_W};
+use crate::peripherals::display::{ColorMode, DisplayCanvas};
 
 mod default_watchface;
 
@@ -13,7 +13,7 @@ pub trait WatchFace<'a> {
     fn new() -> Self;
 
     /// Update watchface with state
-    fn update(&'a mut self, state: WatchFaceState) -> CCanvas<ColorMode, LCD_W, LCD_H>;
+    fn update(&'a mut self, state: WatchFaceState) -> DisplayCanvas;
 }
 
 /// State for the watch face
