@@ -145,8 +145,10 @@ pub use embedded_graphics::pixelcolor::Rgb565 as ColorMode;
 
 // =============================================
 
-pub const LCD_W: usize = 240;
-pub const LCD_H: usize = 240;
+const LCD_W: usize = 240;
+const LCD_H: usize = 240;
+
+pub type DisplayCanvas = CCanvas<ColorMode, LCD_W, LCD_H>;
 
 #[allow(unused)]
 #[derive(Clone, Copy)]
@@ -278,7 +280,7 @@ where
         self.config.backlight.set(level as u8)
     }
     /// Update the display contents
-    pub fn update(&mut self, canvas: CCanvas<ColorMode, LCD_W, LCD_H>) {
+    pub fn update(&mut self, canvas: DisplayCanvas) {
         canvas
             .place_at(Point::zero())
             .draw(&mut self.config.display)
