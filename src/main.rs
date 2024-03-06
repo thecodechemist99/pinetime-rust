@@ -51,7 +51,7 @@ use peripherals::{
     heartrate::HeartRateMonitor,
     spi_flash::Flash,
     touch::{TouchController, TouchGesture},
-    vibrator::{PulseLength, Vibrator},
+    vibrator::Vibrator,
 };
 use system::{
     bluetooth::Bluetooth,
@@ -73,12 +73,11 @@ static BAS_LEVEL: Signal<ThreadModeRawMutex, u8> = Signal::new();
 static CTS_TIME: Signal<ThreadModeRawMutex, TimeReference> = Signal::new();
 static HRS_MEASUREMENT: Signal<ThreadModeRawMutex, u8> = Signal::new();
 static INCREASE_BRIGHTNESS: Signal<ThreadModeRawMutex, bool> = Signal::new();
-static NOTIFY: Signal<ThreadModeRawMutex, u8> = Signal::new();
 static TIME: Signal<ThreadModeRawMutex, NaiveDateTime> = Signal::new();
 static TOUCH_EVENT: Signal<ThreadModeRawMutex, TouchGesture> = Signal::new();
 
 /// BLE runner task
-#[embassy_executor::task(pool_size = 1)]
+#[embassy_executor::task]
 async fn ble_runner(mut ble: Bluetooth) {
     // Start softdevice
     unwrap!(Spawner::for_current_executor()
@@ -101,26 +100,8 @@ async fn ble_runner(mut ble: Bluetooth) {
     }
 }
 
-/// Check for notifications every 100ms
-#[embassy_executor::task(pool_size = 1)]
-async fn notify(mut vibrator: Vibrator) {
-    loop {
-        if NOTIFY.signaled() {
-            // Vibrate signaled amount of times
-            let count = NOTIFY.wait().await;
-            match count {
-                1 => vibrator.pulse(PulseLength::SHORT, None).await,
-                _ => vibrator.pulse(PulseLength::SHORT, Some(count)).await,
-            }
-        }
-
-        // Re-schedule the timer interrupt in 100ms
-        Timer::after(Duration::from_millis(100)).await;
-    }
-}
-
 /// Fetch the battery status from the hardware.
-#[embassy_executor::task(pool_size = 1)]
+#[embassy_executor::task]
 async fn update_battery_status(mut battery: Battery) {
     let mut battery_level = 0;
     loop {
@@ -128,20 +109,20 @@ async fn update_battery_status(mut battery: Battery) {
         let status = (battery.get_percent().await, battery.is_charging());
         BATTERY_STATUS.signal(status);
 
-        // Update battery service if battery level changed
+        // Update BLE battery service if battery level changed
         let (level, _) = status;
         if battery_level != level {
             battery_level = level;
             BAS_LEVEL.signal(battery_level);
         }
 
-        // Re-schedule the timer interrupt in 1s
-        Timer::after(Duration::from_secs(1)).await;
+        // Re-schedule task in 10s
+        Timer::after(Duration::from_secs(10)).await;
     }
 }
 
 /// Fetch the heart rate measurement from the hardware.
-#[embassy_executor::task(pool_size = 1)]
+#[embassy_executor::task]
 async fn update_heart_rate(mut hrm: HeartRateMonitor<TWISPI1>) {
     let mut tick = Ticker::every(Duration::from_millis(100));
     let mut last_bpm = 0;
@@ -166,7 +147,7 @@ async fn update_heart_rate(mut hrm: HeartRateMonitor<TWISPI1>) {
     }
 }
 
-#[embassy_executor::task(pool_size = 1)]
+#[embassy_executor::task]
 async fn update_lcd(mut display: Display<SPI2>) {
     // TODO: Tick necessary or is wait at a higher rate just fine?
     let mut tick = Ticker::every(Duration::from_millis(100));
@@ -213,7 +194,7 @@ async fn update_lcd(mut display: Display<SPI2>) {
 }
 
 /// Update the current time.
-#[embassy_executor::task(pool_size = 1)]
+#[embassy_executor::task]
 async fn update_time(mut time_manager: TimeManager) {
     let mut tick = Ticker::every(Duration::from_secs(1));
     loop {
@@ -231,7 +212,7 @@ async fn update_time(mut time_manager: TimeManager) {
 }
 
 /// Poll the accelerometer state every 10ms
-#[embassy_executor::task(pool_size = 1)]
+#[embassy_executor::task]
 async fn poll_accelerometer(mut accelerometer: Accelerometer<TWISPI1>) {
     loop {
         // Read from sensor
@@ -244,7 +225,7 @@ async fn poll_accelerometer(mut accelerometer: Accelerometer<TWISPI1>) {
 }
 
 /// Poll the button state every 10ms
-#[embassy_executor::task(pool_size = 1)]
+#[embassy_executor::task]
 async fn poll_button(mut button: Button) {
     loop {
         let pressed = button.pressed().await;
@@ -253,13 +234,13 @@ async fn poll_button(mut button: Button) {
             INCREASE_BRIGHTNESS.signal(pressed);
         }
 
-        // Re-schedule the timer interrupt in 10ms
-        Timer::after(Duration::from_millis(10)).await;
+        // Re-schedule the timer interrupt in 20ms
+        Timer::after(Duration::from_millis(20)).await;
     }
 }
 
 /// Check for new touch event every 2ms
-#[embassy_executor::task(pool_size = 1)]
+#[embassy_executor::task]
 async fn poll_touch(mut touch: TouchController<TWISPI1>) {
     loop {
         // Check for touch event
@@ -402,8 +383,7 @@ async fn main(_spawner: Spawner) {
 
     // == Initialize Vibrator ==
     let enable_pin = Output::new(p.P0_16, Level::High, OutputDrive::Standard);
-    let vibrator = Vibrator::init(enable_pin);
-    unwrap!(_spawner.spawn(notify(vibrator)));
+    let _vibrator = Vibrator::init(enable_pin);
 
     defmt::debug!("Vibrator initialized.");
 
