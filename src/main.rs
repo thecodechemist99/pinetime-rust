@@ -47,7 +47,7 @@ use peripherals::{
     accelerometer::Accelerometer,
     battery::Battery,
     button::Button,
-    display::{BacklightPins, Brightness, Display},
+    display::{BacklightPins, Brightness, Display, DisplayCanvas},
     heartrate::HeartRateMonitor,
     spi_flash::Flash,
     touch::{TouchController, TouchGesture},
@@ -58,6 +58,7 @@ use system::{
     config::SystemConfig,
     time::{TimeManager, TimeReference},
 };
+use ui::{DefaultWatchface, WatchFace, WatchFaceState};
 
 // Others
 use chrono::{NaiveDateTime, Timelike};
@@ -75,6 +76,7 @@ static HRS_MEASUREMENT: Signal<ThreadModeRawMutex, u8> = Signal::new();
 static INCREASE_BRIGHTNESS: Signal<ThreadModeRawMutex, bool> = Signal::new();
 static TIME: Signal<ThreadModeRawMutex, NaiveDateTime> = Signal::new();
 static TOUCH_EVENT: Signal<ThreadModeRawMutex, TouchGesture> = Signal::new();
+static UI_CANVAS: Signal<ThreadModeRawMutex, DisplayCanvas> = Signal::new();
 
 /// BLE runner task
 #[embassy_executor::task]
@@ -152,6 +154,7 @@ async fn update_lcd(mut display: Display<SPI2>) {
     // TODO: Tick necessary or is wait at a higher rate just fine?
     let mut tick = Ticker::every(Duration::from_millis(100));
     loop {
+        // Update backlight brightness
         if INCREASE_BRIGHTNESS.signaled() {
             if INCREASE_BRIGHTNESS.wait().await {
                 display.set_brightness(match display.get_brightness() {
@@ -167,25 +170,9 @@ async fn update_lcd(mut display: Display<SPI2>) {
             }
         }
 
-        if BATTERY_STATUS.signaled() {
-            let (percent, charging) = BATTERY_STATUS.wait().await;
-            defmt::info!(
-                "Battery status: {} ({})",
-                percent,
-                if charging { "charging" } else { "discharging" }
-            );
-            // display.update_battery_status(battery);
-        }
-
-        if TIME.signaled() {
-            let time = TIME.wait().await;
-            defmt::info!(
-                "Current time: {}:{}:{}",
-                time.time().hour(),
-                time.time().minute(),
-                time.time().second(),
-            );
-            // display.update_time(time);
+        // Update UI
+        if UI_CANVAS.signaled() {
+            display.update(UI_CANVAS.wait().await);
         }
 
         // Re-schedule the timer interrupt in 1s
@@ -208,6 +195,41 @@ async fn update_time(mut time_manager: TimeManager) {
 
         // Re-schedule the timer interrupt
         tick.next().await;
+    }
+}
+
+#[embassy_executor::task(pool_size = 1)]
+async fn update_ui() {
+    let mut watch_face = DefaultWatchface::new();
+    let mut watch_face_state = WatchFaceState::default();
+    loop {
+        if BATTERY_STATUS.signaled() {
+            let (percent, charging) = BATTERY_STATUS.wait().await;
+            defmt::info!(
+                "Battery status: {} ({})",
+                percent,
+                if charging { "charging" } else { "discharging" }
+            );
+            watch_face_state.percent = percent;
+            watch_face_state.charging = charging;
+        }
+
+        if TIME.signaled() {
+            let time = TIME.wait().await;
+            defmt::info!(
+                "Current time: {}:{}:{}",
+                time.time().hour(),
+                time.time().minute(),
+                time.time().second(),
+            );
+            watch_face_state.time = time;
+        }
+
+        let canvas = watch_face.update(watch_face_state);
+        UI_CANVAS.signal(canvas);
+
+        // Re-schedule the timer interrupt in 100ms
+        Timer::after(Duration::from_millis(100)).await;
     }
 }
 
@@ -386,6 +408,11 @@ async fn main(_spawner: Spawner) {
     let _vibrator = Vibrator::init(enable_pin);
 
     defmt::debug!("Vibrator initialized.");
+
+    defmt::info!("Initializing UI ...");
+
+    // == Initialize UI ==
+    unwrap!(_spawner.spawn(update_ui()));
 
     defmt::info!("Initialization finished");
 }
