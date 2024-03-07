@@ -26,8 +26,13 @@ impl SystemConfig {
         config.gpiote_interrupt_priority = Priority::P2;
         config.time_interrupt_priority = Priority::P2;
 
-        // Allow debugging
-        config.debug = Debug::Allowed;
+        if cfg!(debug_assertions) {
+            // Allow debugging
+            config.debug = Debug::Allowed;
+        } else {
+            // Disallow debugging to reduce binary size
+            config.debug = Debug::Disallowed;
+        }
 
         config
     }

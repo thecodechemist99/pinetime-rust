@@ -94,6 +94,7 @@ async fn ble_runner(mut ble: Bluetooth) {
             .await
             .err()
         {
+            #[cfg(debug_assertions)]
             defmt::info!(
                 "gatt_server run exited with error: {:?}",
                 defmt::Debug2Format(&e)
@@ -139,8 +140,9 @@ async fn update_heart_rate(mut hrm: HeartRateMonitor<TWISPI1>) {
                 last_bpm = hr;
                 HRS_MEASUREMENT.signal(hr);
             }
-            defmt::info!("Heart rate: {}", last_bpm);
+            // defmt::info!("Heart rate: {}", last_bpm);
         } else {
+            #[cfg(debug_assertions)]
             defmt::debug!("Not enough data.");
         }
 
@@ -205,23 +207,23 @@ async fn update_ui() {
     loop {
         if BATTERY_STATUS.signaled() {
             let (percent, charging) = BATTERY_STATUS.wait().await;
-            defmt::info!(
-                "Battery status: {} ({})",
-                percent,
-                if charging { "charging" } else { "discharging" }
-            );
+            // defmt::info!(
+            //     "Battery status: {} ({})",
+            //     percent,
+            //     if charging { "charging" } else { "discharging" }
+            // );
             watch_face_state.percent = percent;
             watch_face_state.charging = charging;
         }
 
         if TIME.signaled() {
             let time = TIME.wait().await;
-            defmt::info!(
-                "Current time: {}:{}:{}",
-                time.time().hour(),
-                time.time().minute(),
-                time.time().second(),
-            );
+            // defmt::info!(
+            //     "Current time: {}:{}:{}",
+            //     time.time().hour(),
+            //     time.time().minute(),
+            //     time.time().second(),
+            // );
             watch_face_state.time = time;
         }
 
@@ -239,7 +241,7 @@ async fn poll_accelerometer(mut accelerometer: Accelerometer<TWISPI1>) {
     loop {
         // Read from sensor
         let (x, y, z) = accelerometer.get_acceleration_vector();
-        defmt::info!("Acceleration vector: ({}, {}, {})", x, y, z);
+        // defmt::info!("Acceleration vector: ({}, {}, {})", x, y, z);
 
         // Re-schedule the timer interrupt in 10ms
         Timer::after(Duration::from_millis(10)).await;
@@ -252,7 +254,6 @@ async fn poll_button(mut button: Button) {
     loop {
         let pressed = button.pressed().await;
         if pressed {
-            defmt::debug!("Button has been pressed.");
             INCREASE_BRIGHTNESS.signal(pressed);
         }
 
@@ -286,12 +287,14 @@ async fn main(_spawner: Spawner) {
     let config = SystemConfig::new();
     let mut p = embassy_nrf::init(config);
 
-    defmt::info!("Initializing system ...");
+    #[cfg(debug_assertions)]
+    defmt::debug!("Initializing system ...");
 
     // == Initialize Timekeeping ==
     let time_manager = TimeManager::init();
     unwrap!(_spawner.spawn(update_time(time_manager)));
 
+    #[cfg(debug_assertions)]
     defmt::debug!("Time manager initialized.");
 
     // == Initialize SPI ==
@@ -306,6 +309,7 @@ async fn main(_spawner: Spawner) {
     let spi_bus = NoopMutex::new(RefCell::new(spi));
     let spi_bus = SPI_BUS.init(spi_bus);
 
+    #[cfg(debug_assertions)]
     defmt::debug!("SPI initialized.");
 
     // == Initialize TWI/I2C ==
@@ -318,20 +322,24 @@ async fn main(_spawner: Spawner) {
     let i2c_bus = NoopMutex::new(RefCell::new(twi));
     let i2c_bus = I2C_BUS.init(i2c_bus);
 
+    #[cfg(debug_assertions)]
     defmt::debug!("TWI/I2C initialized.");
 
     // == Initialize Bluetooth Low Energy ==
     let ble = Bluetooth::init("PineTime");
     unwrap!(_spawner.spawn(ble_runner(ble)));
 
+    #[cfg(debug_assertions)]
     defmt::debug!("BLE initialized.");
 
-    defmt::info!("Initializing peripherals ...");
+    #[cfg(debug_assertions)]
+    defmt::debug!("Initializing peripherals ...");
 
     // == Initialize Accelerometer ==
     let accelerometer = Accelerometer::init(I2cDevice::new(i2c_bus));
     unwrap!(_spawner.spawn(poll_accelerometer(accelerometer)));
 
+    #[cfg(debug_assertions)]
     defmt::debug!("Accelerometer initialized.");
 
     // == Initalize ADC ==
@@ -344,6 +352,7 @@ async fn main(_spawner: Spawner) {
     let adc = Saadc::new(p.SAADC, Irqs, adc_config, [channel_config]);
     adc.calibrate().await;
 
+    #[cfg(debug_assertions)]
     defmt::debug!("SAADC initialized.");
 
     // == Initialize Battery ==
@@ -351,6 +360,7 @@ async fn main(_spawner: Spawner) {
     let battery = Battery::init(adc, charge_indicator);
     unwrap!(_spawner.spawn(update_battery_status(battery)));
 
+    #[cfg(debug_assertions)]
     defmt::debug!("Battery initialized.");
 
     // == Initialize Button ==
@@ -359,12 +369,14 @@ async fn main(_spawner: Spawner) {
     let button = Button::init(button_in_pin, button_out_pin);
     unwrap!(_spawner.spawn(poll_button(button)));
 
+    #[cfg(debug_assertions)]
     defmt::debug!("Button initialized.");
 
     // == Initialize Heart Rate Monitor ==
     let hrm = HeartRateMonitor::init(I2cDevice::new(i2c_bus));
     unwrap!(_spawner.spawn(update_heart_rate(hrm)));
 
+    #[cfg(debug_assertions)]
     defmt::debug!("Heart rate monitor initialized.");
 
     // == Initialize LCD ==
@@ -384,15 +396,17 @@ async fn main(_spawner: Spawner) {
     );
     unwrap!(_spawner.spawn(update_lcd(display)));
 
+    #[cfg(debug_assertions)]
     defmt::debug!("Display initialized.");
 
     // == Initialize SPI Flash ==
     let cs_pin = Output::new(p.P0_05, Level::High, OutputDrive::Standard);
     let mut flash = Flash::init(SpiDevice::new(spi_bus, cs_pin));
     // Put flash in deep power down mode to reduce power consumption
-    defmt::debug!("Device ID: {}", flash.read_id());
+    // defmt::debug!("Device ID: {}", flash.read_id());
     flash.into_power_down().await;
 
+    #[cfg(debug_assertions)]
     defmt::debug!("SPI flash initialized.");
 
     // == Initialize Touch Controller ==
@@ -401,18 +415,22 @@ async fn main(_spawner: Spawner) {
     let touch = TouchController::init(I2cDevice::new(i2c_bus), interrupt_pin, reset_pin);
     unwrap!(_spawner.spawn(poll_touch(touch)));
 
+    #[cfg(debug_assertions)]
     defmt::debug!("Touch controller initialized.");
 
     // == Initialize Vibrator ==
     let enable_pin = Output::new(p.P0_16, Level::High, OutputDrive::Standard);
     let _vibrator = Vibrator::init(enable_pin);
 
+    #[cfg(debug_assertions)]
     defmt::debug!("Vibrator initialized.");
 
+    #[cfg(debug_assertions)]
     defmt::info!("Initializing UI ...");
 
     // == Initialize UI ==
     unwrap!(_spawner.spawn(update_ui()));
 
-    defmt::info!("Initialization finished");
+    #[cfg(debug_assertions)]
+    defmt::debug!("Initialization finished");
 }

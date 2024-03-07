@@ -46,10 +46,7 @@ impl TimeReference {
             .and_hms_milli_opt(hour, min, sec, milli)
             .unwrap();
 
-        Self {
-            time,
-            instant: Instant::now(),
-        }
+        Self::from_datetime(time)
     }
 }
 

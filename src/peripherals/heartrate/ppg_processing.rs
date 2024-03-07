@@ -370,7 +370,6 @@ impl PPG {
             Self::HR_ROI_END as usize,
             max,
         );
-        // defmt::debug!("Signal to noise ratio: {}", sn_ratio);
 
         // Search for peaks in the spectrum only if SNR is good.
         // Look for peaks above threshold, if only one peak is above threshold,
@@ -380,7 +379,6 @@ impl PPG {
         let mut peak_width = 0.0_f32;
 
         if sn_ratio > Self::SNR_THRESHOLD && self.spectrum[0] < Self::DC_THRESHOLD {
-            // defmt::debug!("SNR is good.");
             threshold *= max;
 
             // Reuse imaginary parts for interpolation of x values passed to peak_search
@@ -396,7 +394,6 @@ impl PPG {
                 Self::HR_ROI_END,
             );
             self.peak_location *= Self::FREQ_RES;
-            // defmt::debug!("Peak location: {}", self.peak_location);
         }
 
         // Peak too wide? (broad spectrum noise or large, rapid HR change)

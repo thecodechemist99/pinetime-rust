@@ -74,7 +74,7 @@ impl Bluetooth {
 
     /// Configure bluetooth on boot
     pub fn init(device_name: &str) -> Self {
-        let sd_config = Config {
+        let sd = Softdevice::enable(&Config {
             clock: Some(raw::nrf_clock_lf_cfg_t {
                 // Use external clock to reduce power consumption
                 source: raw::NRF_CLOCK_LF_SRC_XTAL as u8,
@@ -105,8 +105,7 @@ impl Bluetooth {
                 ),
             }),
             ..Default::default()
-        };
-        let sd = Softdevice::enable(&sd_config);
+        });
         let server = Server::new(sd).unwrap();
 
         Self {

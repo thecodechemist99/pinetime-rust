@@ -52,7 +52,7 @@ where
         let buf: &mut [u8] = &mut [0xab, 0x00, 0x00, 0x00];
         // Set CS low, shift instruction code `ABH` followed by 3 dummy bytes, then set CS high again
         self.config.interface.transfer_in_place(buf).unwrap();
-        defmt::debug!("{}", buf);
+        // defmt::debug!("{}", buf);
         buf[0]
     }
     /// Wake from deep power down state
