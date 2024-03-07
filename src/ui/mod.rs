@@ -14,7 +14,7 @@ pub trait WatchFace {
     fn new() -> Self;
 
     /// Update watchface with state
-    fn update(&'a mut self, state: WatchFaceState) -> DisplayCanvas;
+    fn update(&mut self, state: WatchFaceState) -> DisplayCanvas;
 }
 
 /// State for the watch face

@@ -46,7 +46,7 @@ pub struct DefaultWatchface<'a> {
     pub power_label: Label<'a, MonoTextStyle<'a, ColorMode>>,
 }
 
-impl<'a> WatchFace<'a> for DefaultWatchface<'a> {
+impl<'a> WatchFace for DefaultWatchface<'a> {
     fn new() -> Self {
         let canvas: DisplayCanvas = CCanvas::new();
 
@@ -111,7 +111,7 @@ impl<'a> WatchFace<'a> for DefaultWatchface<'a> {
         }
     }
 
-    fn update(&'a mut self, state: WatchFaceState) -> DisplayCanvas {
+    fn update(&mut self, state: WatchFaceState) -> DisplayCanvas {
         // Update time label
         // self.time_label.text_box.text = format_no_std::show(
         //     &mut self.time_label.str_buf,
